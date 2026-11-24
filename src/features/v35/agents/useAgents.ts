@@ -22,6 +22,13 @@ import {
   type TestResult,
 } from './logic';
 import { addToolWizard, agentRecord, agentWizard } from './wizards';
+import { kap } from '@/api/kap';
+import { errorMessage, submitJob } from '@/api/platformLive';
+import { liveSave, type Live } from '@/v35/live';
+import { kapOf, mergeAgents, toAgent,toJobBody, toKapCreate, toKapPatch, type KapAgent, type LiveAgent } from './fromKap';
+import { agentsLiveStore, useAgentsLive } from './live';
+import type { AgentsLiveCtx } from './liveBuild';
+import { EDIT_TITLE, liveAgentWizard, liveEditFields, liveTestFields } from './liveForms';
 
 /** View state that survives navigation between tabs (prototype afTest / afFocus / afLastCase). */
 export const agentUiStore = createStore<{ tests: Record<string, TestResult>; focus: Focus | null; lastCase: AgentsCtx['lastCase'] }>(() => ({ tests: {}, focus: null, lastCase: null }));
@@ -29,7 +36,10 @@ export const agentUiStore = createStore<{ tests: Record<string, TestResult>; foc
 const EMPTY: AfTenant = { thr: { acc: 0.9, cit: 0.95, ref: 0.95, uns: 0.02, num: 1, reg: -0.02, parity: 0.05 }, agents: [], workflows: [], evalsets: [], evalruns: [], runs: [], wfruns: [], scheds: [], preserved: {}, repro: [], toolDis: {} };
 const ESC = ['None', 'Escalate if external figures conflict', 'Escalate to agent owner when grounding is low', 'Escalate to policy owner', 'Escalate to account owner'];
 
-export function useAgents(): AgentsCtx & { tenant: AfTenantKey | null } {
+/** Live tenant: only agents that came from KAP (hides the design's sample agents while the first load runs). */
+const kapOnly = (D: AfTenant): AfTenant => ({ ...D, agents: D.agents.filter((a) => !!kapOf(a)) });
+
+export function useAgents(): AgentsCtx & { tenant: AfTenantKey | null; liveState: Live } {
   const scope = useScope();
   const base = useBase();
   const nav = useNavigate();
@@ -41,15 +51,19 @@ export function useAgents(): AgentsCtx & { tenant: AfTenantKey | null } {
   const ih = ingestStore.use();
   const iam = iamStore.use();
   const ui = agentUiStore.use();
+  const lv = agentsLiveStore.use();
   const t = isAfTenant(key0) ? key0 : null;
   const actor = access.uid;
+  const liveState = useAgentsLive(key0);
+  const isLive = liveState.on && !!t && !!liveState.tenantId;
+  const { loading: liveLoading, tenantId: liveTid, reload: liveReload } = liveState;
 
-  return React.useMemo(() => {
+  const ctx = React.useMemo(() => {
     const T = (t ?? 'sceai') as AfTenantKey;
-    const D = t ? af.tenants[t] : EMPTY;
+    const D = t ? (isLive ? kapOnly(af.tenants[t]) : af.tenants[t]) : EMPTY;
     const TN = t ? AF_TENANT_NAME[t] : '';
     const AF = () => agentFactoryStore.get();
-    const DD = () => (t ? AF().tenants[t] : EMPTY);
+    const DD = () => (t ? (isLive ? kapOnly(AF().tenants[t]) : AF().tenants[t]) : EMPTY);
     const bt = t ? biz.tenants[t] : null;
     const enc = encodeURIComponent;
 
@@ -579,13 +593,141 @@ export function useAgents(): AgentsCtx & { tenant: AfTenantKey | null } {
         }),
     };
 
+    // ---------------------------------------------------------------- live tenant: KAP agents
+    let live: AgentsLiveCtx | undefined;
+    if (isLive && liveTid) {
+      const tid = liveTid;
+      const reloader = { reload: liveReload };
+      const kapA = (a: Agent) => kapOf(a)!.agent;
+      /** put KAP's answer into the store at once (the reload follows) */
+      const putAgent = (k: KapAgent, oldName?: string) =>
+        agentFactoryStore.update((all) => {
+          const D1 = all.tenants[T];
+          const i = D1.agents.findIndex((x) => kapOf(x)?.agent.id === k.id || x.id === (oldName ?? k.name));
+          const prev = i >= 0 ? (D1.agents[i] as LiveAgent) : null;
+          const [next] = mergeAgents(prev ? [prev] : [], [toAgent(k, prev?.kap?.jobs ?? [], prev?.kap?.jobs7d ?? null)]);
+          if (i >= 0) D1.agents[i] = next;
+          else D1.agents.push(next);
+          all.mcp.grants[T] = all.mcp.grants[T] || {};
+          if (oldName && oldName !== k.name) delete all.mcp.grants[T][oldName];
+          all.mcp.grants[T][k.name] = next.vers[next.vers.length - 1].cfg!.tset!.slice();
+        });
+      live = {
+        opts: lv.opts,
+        tests: lv.tests,
+        loading: liveLoading,
+        now: Date.now(),
+        a: {
+          edit: (ag, what) => {
+            const K = kapA(ag);
+            d.form(EDIT_TITLE[what] + ' · ' + ag.id, liveEditFields(K, what, agentsLiveStore.get().opts), 'Save to KAP', (v) => {
+              const r = toKapPatch(K, what, v);
+              if (!r.body) return r.err || 'No change.';
+              const body = r.body;
+              let out: KapAgent | null = null;
+              return liveSave(
+                reloader,
+                async () => {
+                  out = await kap<KapAgent>(tid, 'PATCH', `agents/${K.id}`, body);
+                },
+                () => {
+                  if (out) putAgent(out, K.name);
+                  d.toast(EDIT_TITLE[what] + ' of ' + (out?.name ?? K.name) + ' saved in KAP.');
+                  audit('Changed agent configuration', K.name + ' · ' + Object.keys(body).join(', ') + ' · KAP');
+                  if (out && out.name !== K.name) go.agent(out.name, 'config');
+                },
+              );
+            });
+          },
+          remove: (ag) => {
+            const K = kapA(ag);
+            const ws = wfUsing(DD(), ag.id);
+            d.confirm(
+              'Delete ' + ag.id + '?',
+              'KAP deactivates the agent: it accepts no new jobs, and its job history is kept. KAP refuses while a job of this agent is waiting or running. Creating an agent with the same name later revives it.' + (ws.length ? ' Sample workflows in this console that use it will show it as not found.' : ''),
+              ws.map((w) => ({ a: w.n, b: 'Workflow (sample)', c: '' })),
+              'Delete in KAP',
+              () =>
+                liveSave(
+                  reloader,
+                  () => kap(tid, 'DELETE', `agents/${K.id}`),
+                  () => {
+                    agentFactoryStore.update((all) => {
+                      const D1 = all.tenants[T];
+                      D1.agents = D1.agents.filter((x) => kapOf(x)?.agent.id !== K.id);
+                      if (all.mcp.grants[T]) delete all.mcp.grants[T][K.name];
+                    });
+                    d.toast(K.name + ' deleted in KAP.');
+                    audit('Deleted agent', K.name + ' · KAP');
+                    go.agents();
+                  },
+                ),
+            );
+          },
+          test: (ag) => {
+            const K = kapA(ag);
+            const S = SAMPLES[T] || [];
+            d.form('Run test · ' + ag.id, liveTestFields(K, K.type === 'planner_and_executor' ? S : []), 'Run in KAP', async (v) => {
+              const vv = { ...v, q: (v.q || '').trim() || (v.sample && v.sample !== 'Write my own' ? v.sample : '') };
+              const r = toJobBody(K, vv);
+              if (!r.body) return r.err || 'Enter a request.';
+              let job: { id: string };
+              try {
+                job = await submitJob(tid, K.id, r.body);
+              } catch (e) {
+                return errorMessage(e);
+              }
+              const q = r.body.user_prompt ?? JSON.stringify(r.body.payload);
+              agentsLiveStore.update((s) => {
+                s.tests[ag.id] = { id: job.id, q, at: Date.now() };
+              });
+              audit('Ran test', K.name + ' · job ' + job.id + ' · KAP');
+              d.toast('Job ' + job.id.slice(0, 8) + ' submitted to KAP.');
+              void liveReload();
+              return '';
+            });
+          },
+        },
+      };
+      a.create = () => {
+        const o = agentsLiveStore.get().opts;
+        d.wizard(
+          liveAgentWizard(o, DD().agents.map((x) => x.id), (v) => {
+            const r = toKapCreate(v);
+            if (!r.body) return r.err || 'Check the values.';
+            const body = r.body;
+            let out: KapAgent | null = null;
+            return liveSave(
+              reloader,
+              async () => {
+                out = await kap<KapAgent>(tid, 'POST', 'agents', body);
+              },
+              () => {
+                if (out) putAgent(out);
+                d.toast('Agent ' + body.name + ' created in KAP.');
+                audit('Created agent', body.name + ' · ' + body.type + ' · ' + body.model_ref + ' · tools ' + body.allowed_tools.length + ' · collections ' + (body.collections.join(', ') || 'none') + ' · KAP');
+                go.agent(body.name, 'testing');
+              },
+            );
+          }),
+        );
+      };
+      a.archive = (ag) => live!.a.remove(ag);
+      a.runTest = (key) => {
+        const ag = agentById(idOfKey(key));
+        if (ag) live!.a.test(ag);
+      };
+    }
+    const agColl = isLive ? { ...biz.agColl, ...Object.fromEntries(D.agents.map((x) => [x.id, kapOf(x)!.agent.collections])) } : biz.agColl;
+
     return {
       tenant: t,
       t: T,
       TN,
       af,
       D,
-      agColl: biz.agColl,
+      live,
+      agColl,
       biz: {
         collections: bt?.collections || [],
         ontoTypes: (bt?.onto.types || []).map((x) => x.n),
@@ -601,5 +743,6 @@ export function useAgents(): AgentsCtx & { tenant: AfTenantKey | null } {
       go,
       a,
     };
-  }, [t, af, biz, ih, iam, ui, access, actor, base, nav, d]);
+  }, [t, af, biz, ih, iam, ui, lv, access, actor, base, nav, d, isLive, liveLoading, liveTid, liveReload]);
+  return { ...ctx, liveState };
 }

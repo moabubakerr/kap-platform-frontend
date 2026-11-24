@@ -14,6 +14,7 @@ import {
   caseOf, draftTools, fresh, gateL, gateOf, lastRun, lifeP, MET, modelL, modelOk, parityOf, pct, pubTools, runsOf, SETL, stP, stPill, thrOf, toolInv, valL, verP, whyOf,
   type TestResult,
 } from './logic';
+import { LIVE_STATUS, liveAgentSections, liveAgentsScreen, SESSION_EVAL, SESSION_VERSIONS, type AgentsLiveCtx } from './liveBuild';
 
 // ---------------------------------------------------------------- context
 export interface AgentsNav {
@@ -84,6 +85,8 @@ export interface AgentsCtx {
   lastCase: { cid: string; sid: string; tk: string } | null;
   go: AgentsNav;
   a: AgentsActs;
+  /** set for the live tenant: agents come from KAP (liveBuild.ts) */
+  live?: AgentsLiveCtx;
 }
 
 export type ListFilters = Record<string, string>;
@@ -114,6 +117,7 @@ const deniedModel = (c: AgentsCtx, what: string): ScreenModel => ({ head: { titl
 
 // ================================================================ Agents
 export function agentsScreen(c: AgentsCtx, F: ListFilters, setF: (f: ListFilters) => void): ScreenModel {
+  if (c.live) return liveAgentsScreen(c, F, setF);
   const { D } = c;
   const all = D.agents.filter((a) => canRead(c, a.id));
   const LS = (a: Agent) => lifeP(a)[1];
@@ -416,9 +420,15 @@ export const GUARDS = ['Prompt injection', 'Jailbreak', 'Grounding required', 'N
 export function agentScreen(c: AgentsCtx, id: string, tabIn: string | undefined, setTab: (v: string) => void): ScreenModel {
   const { D } = c;
   const a = D.agents.find((x) => x.id === id);
+  if (!a && c.live?.loading) return { head: { title: id }, sections: [{ callout: 'Loading the agent from KAP…' }] };
   if (!a || !canRead(c, a.id)) return deniedModel(c, 'agent');
   const key = keyOf(a);
   const tab = AGENT_TABS.some((x) => x.value === tabIn) ? tabIn! : 'overview';
+  if (c.live) {
+    const ls = liveAgentSections(c, a, tab, setTab);
+    const sections = ls ?? ([{ callout: tab === 'versions' ? SESSION_VERSIONS : SESSION_EVAL }] as Section[]).concat(tab === 'versions' ? versionsSec(c, a) : evalSec(c, a));
+    return { head: { title: a.id, tabs: AGENT_TABS, tab, setTab, status: LIVE_STATUS }, sections };
+  }
   const pv = pubOf(a);
   const dv = draftOf(a);
   const upd = canUpd(c, a.id);
