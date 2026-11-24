@@ -93,6 +93,7 @@ export const router = createBrowserRouter([
       { path: 'agents', element: L(() => import('@/features/agents/AgentsPage')) },
       { path: 'agents/new', element: L(() => import('@/features/agents/CreateAgentPage')) },
       { path: 'agents/:agentId/:tab?', element: L(() => import('@/features/agents/AgentDetailPage')) },
+      { path: 'playground', element: L(() => import('@/features/v35/playground/PlaygroundPage')) },
       { path: 'workflows', element: L(() => import('@/features/agents-map/AgentsMapPage')) },
       { path: 'tools', element: L(() => import('@/features/mcp/McpPage')) },
       { path: 'schedules', element: L(() => import('@/features/reports/ReportsPage')) },

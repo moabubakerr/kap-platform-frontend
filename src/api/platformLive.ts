@@ -94,6 +94,45 @@ async function get<T>(path: string): Promise<T> {
   return r.json() as Promise<T>;
 }
 
+export interface PlatformAgentSummary {
+  id: string;
+  name: string;
+  type: 'workflow' | 'planner_and_executor';
+  description: string | null;
+  model_ref: string;
+  collections: string[];
+  allowed_tools: string[];
+  config: { input_schema_ref?: string | null; output_schema_ref?: string | null; user_prompt?: string | null } | null;
+  timeout_seconds: number | null;
+  request_limit: number | null;
+  tool_calls_limit: number | null;
+}
+
+export const fetchAgents = (tenantId: string) => get<Page<PlatformAgentSummary>>(`/t/${tenantId}/agents`);
+
+/** Submit an agent job through the platform layer (KAP calls the platform back when it finishes). */
+export async function submitJob(tenantId: string, agentId: string, body: { user_prompt?: string; payload?: unknown }): Promise<{ id: string; status: string }> {
+  const r = await fetch(`/api/platform/t/${tenantId}/agents/${agentId}/jobs`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const data = await r.json().catch(() => null);
+  if (!r.ok) throw new PlatformError(r.status, data);
+  return data;
+}
+
+/** Human-readable message from a platform/KAP error body. */
+export function errorMessage(e: unknown): string {
+  if (e instanceof PlatformError) {
+    const b = e.body as { message?: string; data?: { kap_body?: { message?: string; data?: { errors?: { location?: string[]; message?: string }[] } } } } | null;
+    const kapErrs = b?.data?.kap_body?.data?.errors;
+    if (kapErrs?.length) return kapErrs.map((x) => `${(x.location ?? []).join('.')}: ${x.message}`).join('; ');
+    return b?.data?.kap_body?.message ?? b?.message ?? `Platform API error ${e.status}`;
+  }
+  return e instanceof Error ? e.message : String(e);
+}
+
 export const fetchJobs = (tenantId: string, limit = 200) => get<Page<PlatformJob>>(`/traces?tenant_id=${tenantId}&limit=${limit}`);
 export const fetchTrace = async (jobId: string): Promise<PlatformTrace | null> => {
   try {

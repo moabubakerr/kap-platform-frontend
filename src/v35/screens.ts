@@ -4,7 +4,7 @@
  * A screen opens when ANY listed permission holds on at least one resource.
  */
 import {
-  Activity, Award, Bot, Building2, CalendarClock, Cable, Cpu, Database, FileText, Fingerprint, Gauge, History,
+  Activity, Award, Bot, FlaskConical, Building2, CalendarClock, Cable, Cpu, Database, FileText, Fingerprint, Gauge, History,
   Key, KeyRound, LayoutDashboard, ListChecks, LockKeyhole, Plug, ScrollText, Settings, Shapes, Shield, ShieldCheck,
   Table2, ThumbsDown, User, Users, Workflow, type LucideIcon,
 } from 'lucide-react';
@@ -47,6 +47,7 @@ export const TENANT_NAV: NavGroup[] = [
     label: 'AI Agent Factory',
     items: [
       S('agents', 'Agents', Bot, 'agents', [['agent:read', 'agent']]),
+      S('playground', 'Playground', FlaskConical, 'playground', [['agent:execute', 'agent']]),
       S('workflows', 'Agent Workflows', Workflow, 'workflows', [['agent:read', 'agent']]),
       S('tools', 'AI Agent Tools', Plug, 'tools', [['tool:grant', 'tenant'], ['agent:update', 'agent'], ['tenant:configure', 'tenant'], ['agent:oversee', 'agent']]),
       S('schedules', 'Schedules & Events', CalendarClock, 'schedules', [['agent:execute', 'agent'], ['tenant:configure', 'tenant']]),
