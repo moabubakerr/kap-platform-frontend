@@ -24,11 +24,13 @@ The console follows the v35 design (`design-ref-v35/`, unpacked from `docs/KAP_C
 - `src/engine/ScreenView.tsx` — `<ScreenView model={…} />` renders a whole screen; `PageHeadView`, `DsPill` for custom layouts. Rows with `kv` / `lists` / `perms` open a details panel; rows without get inline actions and optional `onClick`.
 - `src/engine/dialogs.tsx` — `const d = useDialogs()`: `d.form(title, fields, saveL, save)`, `d.wizard({...})`, `d.confirm(title, body, items, cta, fn)`, `d.secret(title, token)`, `d.toast(msg)`. Field types: text, num, select, chips, textarea, note, button, kv, dgm. `save` returns `''` on success or an error message (shown in the dialog). This is the prototype's `form()` / `confirm()` / `iamSecret`.
 - `src/engine/store.ts` — `createStore(init)` → `.use()`, `.get()`, `.update(draft => …)`. Hub data lives in a session store so create/edit/delete actions work like the prototype.
+- Dialog extras: `d.info(title, body, items)` (blocked operation — no action button), wizard `initialStep`, `validate(step, v, set)` may correct values, select fields default to their first option, `button` fields take a `hint`, a save handler may open another dialog (chained dialogs). Tables: `section.openKey` opens a row's details panel initially (deep links).
+- `src/v35/data/audit.ts` — shared audit trail: `recordAudit({ who, action, res, tenants, lvl, area })` for every create/edit/delete/run; the Unified Audit Log screens read `auditStore`.
 - `src/engine/Diagram.tsx` — static diagrams (lineage, flows); spec = the prototype's `dgm()` input.
 
 ## Access
 
-- `src/v35/iam.ts` — users, groups, grants, roles, policies, platform admins in `iamStore` (editable). `can(uid, tenant, perm, type, id)`, `evaluate()` (with reason), `groupsOf`, `rolesIn`, `platformAdmin`, `canPlatform`.
+- `src/v35/iam.ts` — users, groups, grants, roles, policies, platform admins in `iamStore` (editable). `can(uid, tenant, perm, type, id)`, `evaluate()` (with reason), `blockedBy(tenant, key, groups)` (policies), `groupsOf`, `rolesIn`, `platformAdmin`, `canPlatform`.
 - `src/v35/access.tsx` — `useAccess(tenantKey)` → `{ uid, name, can(perm, type, id), canP(perm), isPlatformAdmin, rolesIn }` for the "view as" account. Gate actions exactly as the prototype does (`ed`, `canUpd`, lock tips …).
 - `src/v35/screens.ts` — navigation, paths and screen permissions. The shell already hides screens and guards routes; pages only gate actions and records.
 - Tenant in a page: `useScope()` / `useBase()` from `@/app/shell/AppShell`; `project.key` is the tenant key (`sceai`, `econ`, `sandbox`, `default`). Prototype tenant keys are the same.

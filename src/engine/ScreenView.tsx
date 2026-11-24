@@ -232,7 +232,10 @@ function DetailsPanel({ r, onClose }: { r: Row; onClose: () => void }) {
 }
 
 function TableSection({ s }: { s: Section }) {
-  const [open, setOpen] = React.useState<string | null>(null);
+  const [open, setOpen] = React.useState<string | null>(s.openKey ?? null);
+  React.useEffect(() => {
+    if (s.openKey) setOpen(s.openKey);
+  }, [s.openKey]);
   const rows = s.rows ?? [];
   const panel = (s.mode ?? (rows.some(hasDetails) ? 'panel' : 'inline')) === 'panel';
   const inActs = (r: Row) => (panel && hasDetails(r) ? (r.quick ?? []) : [...(r.acts ?? []), ...(r.quick ?? [])]);

@@ -6,6 +6,7 @@
  *   d.form('Create group', [{ k: 'n', type: 'text', label: 'Name' }], 'Create', (v) => v.n ? '' : 'Enter a name.');
  *   d.wizard({ title, steps, finishL, fields: (step, v, set) => [...], validate: (step, v) => '', finish: (v) => '' });
  *   d.confirm('Delete group', 'This cannot be undone.', [], 'Delete', () => ...);
+ *   d.info('Role in use', 'Remove it from these groups first.', items);   // blocked: no action button
  *   d.secret('Credential for etl-nightly', 'kap_live_…');
  *
  * A save/finish function returns an error message ('' = success, dialog closes).
@@ -27,7 +28,7 @@ export type FormField =
   | { type: 'chips'; k: string; label: string; val?: string[]; opts: string[]; hint?: string }
   | { type: 'textarea'; k: string; label: string; val?: string; ph?: string; hint?: string; rows?: number }
   | { type: 'note'; label?: string; text: string; tone?: 'ok' | 'bad' | 'warn' | 'info' }
-  | { type: 'button'; label: string; click: () => void }
+  | { type: 'button'; label: string; click: () => void; hint?: string }
   | { type: 'kv'; label?: string; rows: [string, unknown][] }
   | { type: 'dgm'; label?: string; dgm: DiagramSpec };
 
@@ -36,19 +37,24 @@ export interface WizardSpec {
   steps: string[];
   finishL: string;
   initial?: FormValues;
+  /** open at this step (e.g. editing starts after the type step) */
+  initialStep?: number;
   fields: (step: number, v: FormValues, set: (k: string, val: any) => void) => FormField[];
-  validate: (step: number, v: FormValues) => string;
+  /** may correct values through `set` (e.g. defaults) before returning an error or '' */
+  validate: (step: number, v: FormValues, set: (k: string, val: any) => void) => string;
   finish: (v: FormValues) => string;
 }
 
 type FormState = { title: string; fields: FormField[]; saveL: string; save: (v: FormValues) => string; v: FormValues; err: string } | { wiz: WizardSpec; v: FormValues; step: number; err: string };
-type ConfirmState = { title: string; body: string; items: { a: string; b?: string; c?: string }[]; cta: string; fn: () => void };
+type ConfirmState = { title: string; body: string; items: { a: string; b?: string; c?: string }[]; cta: string; fn: () => void; blocked?: boolean };
 type SecretState = { title: string; tok: string; sub?: string };
 
 interface Dialogs {
   form: (title: string, fields: FormField[], saveL: string, save: (v: FormValues) => string) => void;
   wizard: (spec: WizardSpec) => void;
   confirm: (title: string, body: string, items: ConfirmState['items'], cta: string, fn: () => void) => void;
+  /** a confirm without an action: the operation is blocked and the body explains why */
+  info: (title: string, body: string, items?: ConfirmState['items']) => void;
   secret: (title: string, tok: string, sub?: string) => void;
   /** success banner (the prototype's toast) */
   toast: (msg: string) => void;
@@ -70,9 +76,10 @@ export function DialogsProvider({ children }: { children: React.ReactNode }) {
   const api = React.useMemo<Dialogs>(
     () => ({
       form: (title, fields, saveL, save) =>
-        setForm({ title, fields, saveL, save, err: '', v: Object.fromEntries(fields.filter((f): f is Extract<FormField, { k: string }> => 'k' in f).map((f) => [f.k, f.val ?? (f.type === 'chips' ? [] : '')])) }),
-      wizard: (wiz) => setForm({ wiz, v: { ...(wiz.initial ?? {}) }, step: 0, err: '' }),
+        setForm({ title, fields, saveL, save, err: '', v: Object.fromEntries(fields.filter((f): f is Extract<FormField, { k: string }> => 'k' in f).map((f) => [f.k, f.val ?? (f.type === 'chips' ? [] : f.type === 'select' ? (f.opts[0] ?? '') : '')])) }),
+      wizard: (wiz) => setForm({ wiz, v: { ...(wiz.initial ?? {}) }, step: wiz.initialStep ?? 0, err: '' }),
       confirm: (title, body, items, cta, fn) => setConfirm({ title, body, items, cta, fn }),
+      info: (title, body, items) => setConfirm({ title, body, items: items ?? [], cta: '', fn: () => {}, blocked: true }),
       secret: (title, tok, sub) => setSecret({ title, tok, sub }),
       toast: (msg) => toast.success(msg),
     }),
@@ -86,8 +93,8 @@ export function DialogsProvider({ children }: { children: React.ReactNode }) {
       {confirm && (
         <Shell title={confirm.title} width={500} onClose={() => setConfirm(null)} footer={
           <>
-            <Button size="sm" variant="outline" onClick={() => setConfirm(null)}>Cancel</Button>
-            <Button size="sm" variant="danger" onClick={() => { const f = confirm.fn; setConfirm(null); f(); }}>{confirm.cta}</Button>
+            <Button size="sm" variant="outline" onClick={() => setConfirm(null)}>{confirm.blocked ? 'Close' : 'Cancel'}</Button>
+            {!confirm.blocked && <Button size="sm" variant="danger" onClick={() => { const f = confirm.fn; setConfirm(null); f(); }}>{confirm.cta}</Button>}
           </>
         }>
           <div className="text-[13.5px]">{confirm.body}</div>
@@ -167,7 +174,7 @@ function FieldView({ f, v, set }: { f: FormField; v: FormValues; set: (k: string
       return (
         <label className="flex flex-col gap-1.5">
           <span className="text-[13px] font-medium text-ink-strong">{f.label}</span>
-          <select value={v[f.k] ?? ''} onChange={(e) => set(f.k, e.target.value)} className={inputCls}>
+          <select value={v[f.k] || f.opts[0] || ''} onChange={(e) => set(f.k, e.target.value)} className={inputCls}>
             {f.opts.map((o) => (
               <option key={o}>{o}</option>
             ))}
@@ -206,9 +213,12 @@ function FieldView({ f, v, set }: { f: FormField; v: FormValues; set: (k: string
     }
     case 'button':
       return (
-        <Button size="sm" variant="outline" onClick={f.click}>
-          {f.label}
-        </Button>
+        <div>
+          <Button size="sm" variant="outline" onClick={f.click}>
+            {f.label}
+          </Button>
+          {f.hint && <div className="mt-1 text-xs text-ink-muted">{f.hint}</div>}
+        </div>
       );
     case 'kv':
       return (
@@ -235,6 +245,8 @@ function FieldView({ f, v, set }: { f: FormField; v: FormValues; set: (k: string
 function FormDialog({ state, set }: { state: FormState; set: React.Dispatch<React.SetStateAction<FormState | null>> }) {
   const setV = (k: string, val: any) => set((s) => (s ? ({ ...s, err: '', v: { ...s.v, [k]: val } } as FormState) : s));
   const close = () => set(null);
+  /** close this dialog unless the save/finish handler opened another one */
+  const closeIfSame = (snapshot: FormState) => set((s) => (s === snapshot ? null : s));
   const isWiz = 'wiz' in state;
   const fields = isWiz ? state.wiz.fields(state.step, state.v, setV) : state.fields;
   const title = isWiz ? state.wiz.title : state.title;
@@ -245,14 +257,15 @@ function FormDialog({ state, set }: { state: FormState; set: React.Dispatch<Reac
 
   const save = () => {
     if (isWiz) {
-      const e = state.wiz.validate(state.step, state.v);
-      if (e) return set({ ...state, err: e });
-      if (!last) return set({ ...state, step: state.step + 1, err: '' });
-      const e2 = state.wiz.finish(state.v);
-      return e2 ? set({ ...state, err: e2 }) : close();
+      const vals = { ...state.v };
+      const e = state.wiz.validate(state.step, vals, (k, val) => { vals[k] = val; });
+      if (e) return set({ ...state, v: vals, err: e });
+      if (!last) return set({ ...state, v: vals, step: state.step + 1, err: '' });
+      const e2 = state.wiz.finish(vals);
+      return e2 ? set({ ...state, v: vals, err: e2 }) : closeIfSame(state);
     }
     const e = state.save(state.v);
-    return e ? set({ ...state, err: e }) : close();
+    return e ? set({ ...state, err: e }) : closeIfSame(state);
   };
 
   return (

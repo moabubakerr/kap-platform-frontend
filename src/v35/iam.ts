@@ -136,7 +136,8 @@ export const canPlatform = (uid: string, perm: string) => {
   return !!pa && (PLATFORM_ROLES[pa.role] ?? []).includes(perm);
 };
 
-const blockedBy = (t: TenantKey, key: string, gs: string[]) => D().policies.filter((p) => p.t === t && p.res.includes(key)).filter((p) => !(p.cleared.includes('*') || p.cleared.some((x) => gs.includes(x))));
+/** Access policies on `key` (e.g. 'collection:x', 'document:y') that groups `gs` are not cleared for. */
+export const blockedBy = (t: TenantKey, key: string, gs: string[]) => D().policies.filter((p) => p.t === t && p.res.includes(key)).filter((p) => !(p.cleared.includes('*') || p.cleared.some((x) => gs.includes(x))));
 
 export interface Decision { ok: boolean; why: string; grant?: IamGrant }
 

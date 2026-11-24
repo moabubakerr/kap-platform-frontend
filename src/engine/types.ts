@@ -130,6 +130,8 @@ export interface Section {
   rows?: Row[];
   /** 'panel' when rows have details (default when any row has them), else 'inline' */
   mode?: 'panel' | 'inline';
+  /** open this row's details panel initially (e.g. deep link to one record) */
+  openKey?: string;
   pager?: { l: string; size: number; setSize: (n: number) => void; pg: string; prev: () => void; next: () => void; prevOff: boolean; nextOff: boolean };
 }
 
