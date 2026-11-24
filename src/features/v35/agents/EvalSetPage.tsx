@@ -1,6 +1,13 @@
-import Porting from '@/features/v35/Porting';
+import { useParams } from 'react-router-dom';
+import { useCrumbs } from '@/app/shell/crumbs';
+import { ScreenView } from '@/engine/ScreenView';
+import { evalSetScreen } from './build';
+import { useAgents } from './useAgents';
 
-/** Placeholder until the hub is ported. */
+/** Evaluation dataset (route /agents/evaluation/:setId): description, usage and test cases. */
 export default function EvalSetPage() {
-  return <Porting />;
+  const { setId = '' } = useParams();
+  const c = useAgents();
+  useCrumbs(['Evaluation Datasets', setId]);
+  return <ScreenView model={evalSetScreen(c, setId)} />;
 }

@@ -1,6 +1,13 @@
-import Porting from '@/features/v35/Porting';
+import * as React from 'react';
+import { useCrumbs } from '@/app/shell/crumbs';
+import { ScreenView } from '@/engine/ScreenView';
+import { agentsScreen, type ListFilters } from './build';
+import { useAgents } from './useAgents';
 
-/** Placeholder until the hub is ported. */
+/** AI Agent Factory · Agents (route /agents). Create agent opens the creation wizard. */
 export default function AgentsPage() {
-  return <Porting />;
+  const c = useAgents();
+  const [f, setF] = React.useState<ListFilters>({});
+  useCrumbs([]);
+  return <ScreenView model={agentsScreen(c, f, setF)} />;
 }

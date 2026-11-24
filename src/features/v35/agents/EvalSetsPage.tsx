@@ -1,6 +1,11 @@
-import Porting from '@/features/v35/Porting';
+import { useCrumbs } from '@/app/shell/crumbs';
+import { ScreenView } from '@/engine/ScreenView';
+import { evalSetsScreen } from './build';
+import { useAgents } from './useAgents';
 
-/** Placeholder until the hub is ported. */
+/** Evaluation Datasets (route /agents/evaluation). */
 export default function EvalSetsPage() {
-  return <Porting />;
+  const c = useAgents();
+  useCrumbs(['Evaluation Datasets']);
+  return <ScreenView model={evalSetsScreen(c)} />;
 }
