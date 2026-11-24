@@ -1,6 +1,11 @@
-import Porting from '@/features/v35/Porting';
+import * as React from 'react';
+import { ScreenView } from '@/engine/ScreenView';
+import { auditScreen, type AuditFilters } from './build';
+import { useAdmin } from './useAdmin';
 
-/** Placeholder until the hub is ported. */
+/** Tenant Unified Audit Log (route /p/:tenant/audit): this tenant's events, seed and live. */
 export default function TenantAuditPage() {
-  return <Porting />;
+  const c = useAdmin();
+  const [F, setF] = React.useState<AuditFilters>({});
+  return <ScreenView model={auditScreen(c, true, F, setF)} />;
 }

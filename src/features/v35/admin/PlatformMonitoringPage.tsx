@@ -1,6 +1,8 @@
-import Porting from '@/features/v35/Porting';
+import { ScreenView } from '@/engine/ScreenView';
+import { monitoringScreen } from './build';
+import { useAdmin } from './useAdmin';
 
-/** Placeholder until the hub is ported. */
+/** Monitoring & Alerts (route /platform/monitoring): platform health, queues, alerts, rules, routes, external monitoring. */
 export default function PlatformMonitoringPage() {
-  return <Porting />;
+  return <ScreenView model={monitoringScreen(useAdmin())} />;
 }

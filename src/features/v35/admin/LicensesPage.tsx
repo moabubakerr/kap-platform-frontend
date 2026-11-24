@@ -1,6 +1,8 @@
-import Porting from '@/features/v35/Porting';
+import { ScreenView } from '@/engine/ScreenView';
+import { licenseScreen } from './build';
+import { useAdmin } from './useAdmin';
 
-/** Placeholder until the hub is ported. */
+/** License Management (route /platform/licenses). */
 export default function LicensesPage() {
-  return <Porting />;
+  return <ScreenView model={licenseScreen(useAdmin())} />;
 }

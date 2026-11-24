@@ -1,6 +1,12 @@
-import Porting from '@/features/v35/Porting';
+import { useNavigate, useParams } from 'react-router-dom';
+import { ScreenView } from '@/engine/ScreenView';
+import { platformConfigScreen } from './build';
+import { useAdmin } from './useAdmin';
 
-/** Placeholder until the hub is ported. */
+/** Platform Configuration (route /platform/configuration/:tab?): General · Workloads & Scheduling · Security Defaults · Configuration History. */
 export default function PlatformConfigPage() {
-  return <Porting />;
+  const { tab } = useParams();
+  const nav = useNavigate();
+  const c = useAdmin();
+  return <ScreenView model={platformConfigScreen(c, tab, (t) => nav(`/platform/configuration${t === 'general' ? '' : `/${t}`}`))} />;
 }

@@ -1,6 +1,8 @@
-import Porting from '@/features/v35/Porting';
+import { ScreenView } from '@/engine/ScreenView';
+import { tenantSecurityScreen } from './build';
+import { useAdmin } from './useAdmin';
 
-/** Placeholder until the hub is ported. */
+/** Tenant Security & Credentials (route /p/:tenant/security): credential references and tenant encryption key. */
 export default function TenantSecurityPage() {
-  return <Porting />;
+  return <ScreenView model={tenantSecurityScreen(useAdmin())} />;
 }
