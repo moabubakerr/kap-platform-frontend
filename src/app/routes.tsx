@@ -1,10 +1,12 @@
 import * as React from 'react';
 import { createBrowserRouter, Navigate, useParams } from 'react-router-dom';
-import { PlatformLayout, ProjectLayout, ProjectPage, useScope } from './shell/AppShell';
+import { PlatformLayout, ProjectLayout, useScope } from './shell/AppShell';
 import { Page } from '@/components/common/layout';
 import { Skeleton } from '@/components/common/primitives';
 
-const L = (f: () => Promise<{ default: React.ComponentType }>) => {
+type PageModule = { default: React.ComponentType };
+
+const L = (f: () => Promise<PageModule>) => {
   const C = React.lazy(f);
   return (
     <React.Suspense fallback={<PageSkeleton />}>
@@ -28,15 +30,20 @@ function PageSkeleton() {
   );
 }
 
-const porting = () => L(() => import('@/features/v35/Porting'));
+// Every v35 page, each loaded on first use.
+const V35_PAGES = import.meta.glob<PageModule>('../features/v35/**/*Page.tsx');
+/** v35 screen at src/features/v35/<path>.tsx */
+const V = (path: string) => {
+  const load = V35_PAGES[`../features/v35/${path}.tsx`];
+  if (!load) throw new Error(`No v35 page ${path}`);
+  return L(load);
+};
 
-/** Tenant dashboard: SCEAI dashboard (v1), Default system overview, or a sample-tenant notice. */
+/** Tenant landing: the Default system tenant has its own overview; others the v35 dashboard. */
 function TenantHome() {
   const s = useScope();
-  if (s.kind === 'project' && s.project.live) return <Navigate to={`/p/${s.project.key}/monitoring`} replace />;
-  if (s.kind === 'project' && s.project.key === 'default') return L(() => import('@/features/overview/DefaultOverviewPage'));
-  if (s.kind === 'project' && s.project.sample) return <ProjectPage resource="dashboards">{null}</ProjectPage>;
-  return L(() => import('@/features/overview/OverviewPage'));
+  if (s.kind === 'project' && s.project.key === 'default') return V('platform/DefaultTenantPage');
+  return V('platform/TenantDashboardPage');
 }
 
 /** Old v1 paths → v35 paths (keeps links and bookmarks working). */
@@ -52,17 +59,17 @@ export const router = createBrowserRouter([
     path: '/platform',
     element: <PlatformLayout />,
     children: [
-      { index: true, element: L(() => import('@/features/platform/PlatformOverviewPage')) },
-      { path: 'tenants', element: L(() => import('@/features/platform/ProjectsPage')) },
-      { path: 'models', element: L(() => import('@/features/platform/ModelServingPage')) },
-      { path: 'mcp', element: L(() => import('@/features/platform/McpRegistryPage')) },
-      { path: 'admins', element: L(() => import('@/features/v35/iam/PlatformAdminsPage')) },
-      { path: 'identity', element: L(() => import('@/features/v35/iam/IdentityProvidersPage')) },
-      { path: 'configuration', element: porting() },
-      { path: 'monitoring', element: L(() => import('@/features/platform/QueuesPage')) },
-      { path: 'audit', element: L(() => import('@/features/platform/PlatformAuditPage')) },
-      { path: 'secrets', element: porting() },
-      { path: 'licenses', element: porting() },
+      { index: true, element: V('platform/PlatformHomePage') },
+      { path: 'tenants', element: V('platform/TenantsPage') },
+      { path: 'models/:tab?', element: V('platform/ModelsRegistryPage') },
+      { path: 'mcp/:tab?', element: V('platform/McpRegistryPage') },
+      { path: 'admins', element: V('iam/PlatformAdminsPage') },
+      { path: 'identity', element: V('iam/IdentityProvidersPage') },
+      { path: 'configuration/:tab?', element: V('admin/PlatformConfigPage') },
+      { path: 'monitoring/:tab?', element: V('admin/PlatformMonitoringPage') },
+      { path: 'audit', element: V('admin/PlatformAuditPage') },
+      { path: 'secrets/:tab?', element: V('admin/PlatformSecretsPage') },
+      { path: 'licenses', element: V('admin/LicensesPage') },
       // v1 paths
       { path: 'projects', element: <Navigate to="/platform/tenants" replace /> },
       { path: 'users', element: <Navigate to="/platform/admins" replace /> },
@@ -76,69 +83,76 @@ export const router = createBrowserRouter([
     children: [
       { index: true, element: <TenantHome /> },
       // Data Ingestion Hub
-      { path: 'sources', element: L(() => import('@/features/v35/ingest/SourcesPage')) },
-      { path: 'sources/:sourceId/:tab?', element: L(() => import('@/features/v35/ingest/SourcePage')) },
-      { path: 'pipelines', element: L(() => import('@/features/v35/ingest/PipelinesPage')) },
-      { path: 'pipelines/:pipelineId/:tab?', element: L(() => import('@/features/v35/ingest/PipelinePage')) },
-      { path: 'runs', element: L(() => import('@/features/v35/ingest/RunsPage')) },
-      { path: 'runs/:runId/:tab?', element: L(() => import('@/features/v35/ingest/IngestRunPage')) },
+      { path: 'sources', element: V('ingest/SourcesPage') },
+      { path: 'sources/:sourceId/:tab?', element: V('ingest/SourcePage') },
+      { path: 'pipelines', element: V('ingest/PipelinesPage') },
+      { path: 'pipelines/:pipelineId/:tab?', element: V('ingest/PipelinePage') },
+      { path: 'runs', element: V('ingest/RunsPage') },
+      { path: 'runs/:runId/:tab?', element: V('ingest/IngestRunPage') },
       // Business Data Hub
-      { path: 'collections', element: L(() => import('@/features/v35/data/CollectionsPage')) },
-      { path: 'collections/:collectionId/:tab?', element: L(() => import('@/features/v35/data/CollectionPage')) },
-      { path: 'structured', element: L(() => import('@/features/v35/data/DatasetsPage')) },
-      { path: 'structured/:datasetId/:tab?', element: L(() => import('@/features/v35/data/DatasetPage')) },
-      { path: 'unstructured', element: L(() => import('@/features/v35/data/DocumentsPage')) },
-      { path: 'unstructured/:documentId/:tab?', element: L(() => import('@/features/v35/data/DocumentPage')) },
-      { path: 'entities', element: L(() => import('@/features/v35/data/EntitiesPage')) },
+      { path: 'collections', element: V('data/CollectionsPage') },
+      { path: 'collections/:collectionId/:tab?', element: V('data/CollectionPage') },
+      { path: 'structured', element: V('data/DatasetsPage') },
+      { path: 'structured/:datasetId/:tab?', element: V('data/DatasetPage') },
+      { path: 'unstructured', element: V('data/DocumentsPage') },
+      { path: 'unstructured/:documentId/:tab?', element: V('data/DocumentPage') },
+      { path: 'entities', element: V('data/EntitiesPage') },
       { path: 'catalogue', element: L(() => import('@/features/catalogue/CataloguePage')) },
       { path: 'catalogue/publish', element: L(() => import('@/features/catalogue/PublishPage')) },
       { path: 'catalogue/:code', element: L(() => import('@/features/catalogue/CatalogueEntryPage')) },
       // AI Agent Factory
-      { path: 'agents', element: L(() => import('@/features/agents/AgentsPage')) },
-      { path: 'agents/new', element: L(() => import('@/features/agents/CreateAgentPage')) },
-      { path: 'agents/:agentId/:tab?', element: L(() => import('@/features/agents/AgentDetailPage')) },
-      { path: 'playground', element: L(() => import('@/features/v35/playground/PlaygroundPage')) },
-      { path: 'workflows', element: L(() => import('@/features/agents-map/AgentsMapPage')) },
-      { path: 'tools', element: L(() => import('@/features/mcp/McpPage')) },
-      { path: 'schedules', element: L(() => import('@/features/reports/ReportsPage')) },
-      { path: 'monitoring', element: L(() => import('@/features/v35/monitoring/MonitoringPage')) },
-      { path: 'monitoring/runs/:jobId/:tab?', element: L(() => import('@/features/v35/monitoring/RunPage')) },
-      { path: 'monitoring/:tab', element: L(() => import('@/features/v35/monitoring/MonitoringPage')) },
+      { path: 'agents', element: V('agents/AgentsPage') },
+      { path: 'agents/evaluation', element: V('agents/EvalSetsPage') },
+      { path: 'agents/evaluation/:setId', element: V('agents/EvalSetPage') },
+      { path: 'agents/:agentId/:tab?', element: V('agents/AgentPage') },
+      { path: 'playground', element: V('playground/PlaygroundPage') },
+      { path: 'workflows', element: V('workflows/WorkflowsPage') },
+      { path: 'workflows/map', element: V('workflows/AgentsMapPage') },
+      { path: 'workflows/ask-ai-pipeline', element: L(() => import('@/features/agents-map/AgentsMapPage')) },
+      { path: 'workflows/:workflowId/:tab?', element: V('workflows/WorkflowPage') },
+      { path: 'tools', element: V('tools/ToolsPage') },
+      { path: 'tools/mcp/:serverId?', element: V('tools/McpConnectionsPage') },
+      { path: 'schedules', element: V('tools/SchedulesPage') },
+      { path: 'schedules/reports', element: V('tools/ScheduledReportsPage') },
+      { path: 'monitoring', element: V('monitoring/MonitoringPage') },
+      { path: 'monitoring/runs/:jobId/:tab?', element: V('monitoring/RunPage') },
+      { path: 'monitoring/:tab', element: V('monitoring/MonitoringPage') },
       { path: 'conversations', element: L(() => import('@/features/conversations/ConversationsPage')) },
       { path: 'conversations/:msgId', element: L(() => import('@/features/conversations/MessagePage')) },
       // AI Governance, AI Confidence Hub
-      { path: 'policies', element: porting() },
-      { path: 'confidence', element: porting() },
-      { path: 'evidence', element: porting() },
-      { path: 'feedback', element: L(() => import('@/features/feedback/FeedbackPage')) },
+      { path: 'policies', element: V('confidence/PoliciesPage') },
+      { path: 'confidence', element: V('confidence/ConfidencePage') },
+      { path: 'evidence', element: V('confidence/EvidencePage') },
+      { path: 'feedback', element: V('confidence/FeedbackPage') },
       // User & Permission Management
-      { path: 'users', element: L(() => import('@/features/v35/iam/UsersPage')) },
-      { path: 'users/:userId/:tab?', element: L(() => import('@/features/v35/iam/UserPage')) },
-      { path: 'groups', element: L(() => import('@/features/v35/iam/GroupsPage')) },
-      { path: 'groups/:groupId/:tab?', element: L(() => import('@/features/v35/iam/GroupPage')) },
-      { path: 'roles', element: L(() => import('@/features/v35/iam/RolesPage')) },
-      { path: 'service-accounts', element: L(() => import('@/features/v35/iam/ServiceAccountsPage')) },
-      { path: 'service-accounts/:saId/:tab?', element: L(() => import('@/features/v35/iam/ServiceAccountPage')) },
+      { path: 'users', element: V('iam/UsersPage') },
+      { path: 'users/:userId/:tab?', element: V('iam/UserPage') },
+      { path: 'groups', element: V('iam/GroupsPage') },
+      { path: 'groups/:groupId/:tab?', element: V('iam/GroupPage') },
+      { path: 'roles', element: V('iam/RolesPage') },
+      { path: 'service-accounts', element: V('iam/ServiceAccountsPage') },
+      { path: 'service-accounts/:saId/:tab?', element: V('iam/ServiceAccountPage') },
       // Tenant Administration
-      { path: 'configuration', element: L(() => import('@/features/settings/SettingsPage')) },
-      { path: 'audit', element: L(() => import('@/features/audit/AuditPage')) },
-      { path: 'security', element: porting() },
+      { path: 'configuration/:tab?', element: V('admin/TenantConfigPage') },
+      { path: 'audit', element: V('admin/TenantAuditPage') },
+      { path: 'security/:tab?', element: V('admin/TenantSecurityPage') },
       // v1 paths → v35
+      { path: 'agents/new', element: <Moved to="/p/:projectId/agents" /> },
       { path: 'jobs', element: <Moved to="/p/:projectId/monitoring" /> },
       { path: 'traces', element: <Moved to="/p/:projectId/monitoring/traces" /> },
       { path: 'traces/:jobId/:tab?', element: <Moved to="/p/:projectId/monitoring/runs/:jobId/trace" /> },
-      { path: 'map', element: <Moved to="/p/:projectId/workflows" /> },
+      { path: 'map', element: <Moved to="/p/:projectId/workflows/map" /> },
       { path: 'connectors', element: <Moved to="/p/:projectId/sources" /> },
       { path: 'ingestion', element: <Moved to="/p/:projectId/runs" /> },
       { path: 'packages', element: <Moved to="/p/:projectId/pipelines" /> },
       { path: 'indicators', element: <Moved to="/p/:projectId/structured" /> },
-      { path: 'indicators/:jobId', element: <Moved to="/p/:projectId/structured/:jobId" /> },
-      { path: 'mcp', element: <Moved to="/p/:projectId/tools" /> },
+      { path: 'indicators/:jobId', element: <Moved to="/p/:projectId/structured" /> },
+      { path: 'mcp', element: <Moved to="/p/:projectId/tools/mcp" /> },
       { path: 'providers', element: <Navigate to="/platform/models" replace /> },
-      { path: 'reports', element: <Moved to="/p/:projectId/schedules" /> },
+      { path: 'reports', element: <Moved to="/p/:projectId/schedules/reports" /> },
       { path: 'tokens', element: <Moved to="/p/:projectId/service-accounts" /> },
       { path: 'grants', element: <Moved to="/p/:projectId/groups" /> },
-      { path: 'configs', element: <Moved to="/p/:projectId/configuration" /> },
+      { path: 'configs', element: <Moved to="/p/:projectId/configuration/history" /> },
       { path: 'settings', element: <Moved to="/p/:projectId/configuration" /> },
       { path: '*', element: <Navigate to="." replace /> },
     ],
