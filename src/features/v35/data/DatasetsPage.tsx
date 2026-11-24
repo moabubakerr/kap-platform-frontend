@@ -1,6 +1,10 @@
-import Porting from '@/features/v35/Porting';
+import { ScreenView } from '@/engine/ScreenView';
+import { datasetsScreen } from './build';
+import { NoBusinessData, useDataHub } from './useDataHub';
 
-/** Placeholder until the hub is ported. */
+/** Business Data Hub · Structured Data (route /structured). */
 export default function DatasetsPage() {
-  return <Porting />;
+  const h = useDataHub();
+  if (!h) return <NoBusinessData title="Structured Data" />;
+  return <ScreenView model={datasetsScreen(h)} />;
 }

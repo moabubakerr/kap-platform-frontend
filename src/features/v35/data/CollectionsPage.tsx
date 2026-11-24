@@ -1,6 +1,10 @@
-import Porting from '@/features/v35/Porting';
+import { ScreenView } from '@/engine/ScreenView';
+import { collectionsScreen } from './build';
+import { NoBusinessData, useDataHub } from './useDataHub';
 
-/** Placeholder until the hub is ported. */
+/** Business Data Hub · Collections (route /collections). */
 export default function CollectionsPage() {
-  return <Porting />;
+  const h = useDataHub();
+  if (!h) return <NoBusinessData title="Collections" />;
+  return <ScreenView model={collectionsScreen(h)} />;
 }
