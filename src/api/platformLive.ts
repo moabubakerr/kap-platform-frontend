@@ -145,7 +145,9 @@ export function toJob(j: PlatformJob, now = Date.now()): Job {
     abs: fmtAbs(j.created_at),
     createdAt: j.created_at,
     toolCalls: 0,
-    modelRequests: 0,
+    modelRequests: j.trace_calls,
+    traceStatus: j.trace_status,
+    traceCalls: j.trace_calls,
   };
 }
 

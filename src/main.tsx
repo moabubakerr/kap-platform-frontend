@@ -13,6 +13,7 @@ import '@fontsource/ibm-plex-mono/600.css';
 import './styles/index.css';
 import { router } from './app/routes';
 import { TooltipProvider } from './components/ui/menu';
+import { AccessProvider } from './v35/access';
 
 const queryClient = new QueryClient({ defaultOptions: { queries: { refetchOnWindowFocus: false, retry: 1 } } });
 
@@ -20,7 +21,9 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
-        <RouterProvider router={router} />
+        <AccessProvider>
+          <RouterProvider router={router} />
+        </AccessProvider>
         <Toaster position="bottom-right" toastOptions={{ style: { fontFamily: 'var(--font-sans)', borderRadius: 4 } }} />
       </TooltipProvider>
     </QueryClientProvider>

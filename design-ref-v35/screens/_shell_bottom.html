@@ -1,0 +1,25 @@
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,420px),1fr));gap:12px;align-items:start">
+    <div style="background:var(--surface-card);border:1px solid var(--border-subtle);border-radius:var(--r-card)"><div style="padding:14px 16px;border-bottom:1px solid var(--border-subtle);font-weight:600;color:var(--text-strong)">Platform service identities · 3</div><sc-for list="{{ defUsers }}" as="u"><div style="display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:center;padding:10px 16px;border-top:1px solid var(--border-subtle)"><div style="min-width:0"><div style="font-family:var(--font-mono);font-size:12.5px;font-weight:600;color:var(--text-strong)">{{ u.n }}</div><div style="font-size:12px;color:var(--text-muted)">{{ u.d }}</div></div><span style="font-size:12px;color:var(--text-muted);white-space:nowrap">{{ u.last }}</span></div></sc-for></div>
+    
+  </div>
+</sc-if></sc-if>
+<sc-if value="{{ defEmpty }}">
+  <div style="background:var(--surface-card);border:1px solid var(--border-subtle);border-radius:var(--r-card);padding:56px 24px;display:flex;flex-direction:column;align-items:center;text-align:center;gap:10px">
+    <span style="width:44px;height:44px;border-radius:var(--r-card);background:var(--surface-sunken);display:grid;place-items:center;color:var(--text-muted)">{{ ic.building }}</span>
+    <div style="font-size:17px;font-weight:600;color:var(--text-strong)">No {{ defLabel }} in {{ tenantName }}</div>
+    <div style="max-width:460px;color:var(--text-muted);font-size:13.5px">{{ defMsg }}</div>
+    <div style="display:flex;gap:8px;margin-top:6px"><x-import component-from-global-scope="SingleWindowDesignSystem_3a0998.Button" size="sm" variant="outline" sc-camel-on-click="{{ goHome }}" hint-size="150px,34px">Tenant dashboard</x-import></div>
+  </div>
+</sc-if>
+</div>
+</sc-if>
+</main>
+</div>
+<sc-if value="{{ anyOverlay }}"><div sc-camel-on-click="{{ closeAll }}" style="position:fixed;inset:0;z-index:50;background:{{ backdrop }}"></div></sc-if>
+<sc-if value="{{ palette }}"><div style="position:fixed;left:50%;top:80px;transform:translateX(-50%);width:640px;max-width:calc(100vw - 32px);z-index:80;background:var(--surface-card);border:1px solid var(--border-subtle);border-radius:6px;box-shadow:var(--shadow-xl);overflow:hidden">
+  <div style="display:flex;align-items:center;gap:10px;padding:14px 16px;border-bottom:1px solid var(--border-subtle);color:var(--text-muted)">{{ ic.search }}<span style="flex:1;font-size:15px;color:var(--text-strong)">sceai<span style="display:inline-block;width:1.5px;height:17px;background:var(--brand);vertical-align:-3px;margin-left:1px"></span></span><span style="font-family:var(--font-mono);font-size:11px;padding:2px 6px;border:1px solid var(--border-default);border-radius:var(--r-card)">Esc</span></div>
+  <div style="padding:6px;max-height:420px;overflow:auto"><sc-for list="{{ palItems }}" as="p"><sc-if value="{{ p.head }}"><div style="padding:8px 10px 4px;font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--text-subtle)">{{ p.head }}</div></sc-if><div sc-camel-on-click="{{ p.go }}" style="display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:var(--r-sm);background:{{ p.bg }};cursor:pointer" style-hover="background:var(--surface-hover)"><span style="color:var(--text-muted);display:flex">{{ p.icon }}</span><span style="font-family:{{ p.f }};font-size:13.5px;color:var(--text-strong);white-space:nowrap">{{ p.n }}</span><span style="font-size:12px;color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1">{{ p.d }}</span><span style="font-size:11.5px;color:var(--text-subtle);white-space:nowrap">{{ p.k }}</span></div></sc-for></div>
+  <div style="display:flex;gap:16px;padding:8px 16px;border-top:1px solid var(--border-subtle);font-size:11.5px;color:var(--text-subtle);background:var(--surface-sunken)"><span>Enter to open</span><span>Up and down to move</span><span>Search by name or ID</span></div>
+</div></sc-if>
+</div>
+</x-dc>

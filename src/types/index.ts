@@ -36,6 +36,9 @@ export interface Job {
   createdAt: string; // ISO
   toolCalls: number;
   modelRequests: number;
+  /** live tenants: whether model calls were linked to this job (platform API) */
+  traceStatus?: 'pending' | 'linked' | 'ambiguous' | 'none';
+  traceCalls?: number;
 }
 
 export interface ConsoleUser {
