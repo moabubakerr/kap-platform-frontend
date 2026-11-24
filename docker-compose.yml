@@ -1,3 +1,11 @@
+# KAP Console on the test stand.
+#
+#   cp .env.example .env    # set PLATFORM_API_KEY (the platform API key)
+#   docker compose up -d --build
+#
+# Bound to the VM's loopback only: the console has no sign-in yet and its nginx
+# adds the platform API key. Reach it through an SSH tunnel:
+#   ssh -N -L 127.0.0.1:17100:127.0.0.1:17100 ubuntu@10.100.14.2  → http://localhost:17100
 services:
   kap-console:
     build: .
@@ -5,17 +13,18 @@ services:
     container_name: kap-console
     restart: unless-stopped
     ports:
-      - "17100:8080"
+      - "127.0.0.1:17100:8080"
     environment:
-      KAP_UPSTREAM: ${KAP_UPSTREAM:-http://host.docker.internal:8013}
-      ASKAI_UPSTREAM: ${ASKAI_UPSTREAM:-http://host.docker.internal:18000}
       PLATFORM_UPSTREAM: ${PLATFORM_UPSTREAM:-http://platform-api:8080}
       PLATFORM_API_KEY: ${PLATFORM_API_KEY:?set PLATFORM_API_KEY in .env}
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+      # KAP's API is on the same Docker network as its container name (not the
+      # host loopback); Ask AI is not deployed on this stand yet.
+      KAP_UPSTREAM: ${KAP_UPSTREAM:-http://sceai-stand-api-1:8000}
+      ASKAI_UPSTREAM: ${ASKAI_UPSTREAM:-http://127.0.0.1:9}
     networks:
-      - kap_shared_network
+      - kap
 
 networks:
-  kap_shared_network:
+  kap:
     external: true
+    name: sceai-stand_default
