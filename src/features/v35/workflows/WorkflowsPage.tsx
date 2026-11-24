@@ -1,6 +1,13 @@
-import Porting from '@/features/v35/Porting';
+import * as React from 'react';
+import { useCrumbs } from '@/app/shell/crumbs';
+import { ScreenView } from '@/engine/ScreenView';
+import { workflowsScreen, type ListFilters } from './build';
+import { useWorkflows } from './useWorkflows';
 
-/** Placeholder until the hub is ported. */
+/** AI Agent Factory · Agent Workflows (route /workflows). */
 export default function WorkflowsPage() {
-  return <Porting />;
+  const c = useWorkflows();
+  const [f, setF] = React.useState<ListFilters>({});
+  useCrumbs([]);
+  return <ScreenView model={workflowsScreen(c, f, setF)} />;
 }

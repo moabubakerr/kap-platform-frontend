@@ -1,6 +1,13 @@
-import Porting from '@/features/v35/Porting';
+import * as React from 'react';
+import { useCrumbs } from '@/app/shell/crumbs';
+import { ScreenView } from '@/engine/ScreenView';
+import { agentsMapScreen } from './build';
+import { useWorkflows } from './useWorkflows';
 
-/** Placeholder until the hub is ported. */
+/** Tenant Agents Map (route /workflows/map): agents, workflows and tools of the tenant. */
 export default function AgentsMapPage() {
-  return <Porting />;
+  const c = useWorkflows();
+  const [sel, setSel] = React.useState<string | null>(null);
+  useCrumbs(['Tenant Agents Map']);
+  return <ScreenView model={agentsMapScreen(c, sel, setSel)} />;
 }
