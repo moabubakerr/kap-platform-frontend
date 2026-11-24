@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { useCrumbs } from '@/app/shell/crumbs';
 import { ScreenView } from '@/engine/ScreenView';
+import { LiveBanner } from '@/v35/live';
 import { runsScreen, type ListFilters } from './build';
 import { useIngest } from './useIngest';
 
@@ -9,5 +10,10 @@ export default function RunsPage() {
   const c = useIngest();
   const [f, setF] = React.useState<ListFilters>({});
   useCrumbs([]);
-  return <ScreenView model={runsScreen(c, f, setF)} />;
+  return (
+    <>
+      <LiveBanner live={c.liveState} what="ingestion runs (KAP pipeline jobs)" />
+      <ScreenView model={runsScreen(c, f, setF)} />
+    </>
+  );
 }

@@ -6,6 +6,7 @@
  */
 import type { DiagramEdge, DiagramNode, DiagramSpec, DsStatus } from '@/engine/types';
 import type { IngestTenant, PipeCfg, Pipeline, Run, RunItem, Source, Stage } from '@/v35/data/ingest';
+import type { LivePipeCfg } from './fromKap';
 
 export type Kind = 'Structured' | 'Unstructured' | 'Mixed';
 
@@ -50,6 +51,8 @@ const STRX = /\.(csv|xlsx|json|parquet)\b|\*\.(csv|xlsx|json|parquet)/i;
 const UNSX = /\.(pdf|docx|html|txt|eml|pptx)\b|\*\.(pdf|docx|html|txt|eml|pptx)/i;
 
 export function kindOf(H: IngestTenant, v: Partial<PipeCfg> & { src?: string }): Kind {
+  const kk = (v as LivePipeCfg).kap?.kind;
+  if (kk) return kk === 'indicators' ? 'Structured' : 'Unstructured';
   const ty = v.src === 'manual' ? 'Manual upload' : srcOf(H, v.src)?.type ?? '';
   if (isDb(ty)) return 'Structured';
   if (ty === 'REST API') return (v.resp || '').startsWith('Records') ? 'Structured' : 'Unstructured';
@@ -64,7 +67,9 @@ export const outOf = (H: IngestTenant, v: Partial<PipeCfg>) => {
 };
 export const trigOf = (v: Pick<PipeCfg, 'trig' | 'sched' | 'ev'>) => (v.trig === 'Schedule' ? v.sched ?? '' : v.trig === 'Event' ? `Event · ${v.ev}` : v.trig);
 export const runsOf = (H: IngestTenant, pid: string) => H.runs.filter((r) => r.pipe === pid);
-export const nextRunId = (H: IngestTenant) => `R-${String(Math.max(0, ...H.runs.map((r) => +r.id.slice(2))) + 1).padStart(4, '0')}`;
+export const nextRunId = (H: IngestTenant) => `R-${String(Math.max(0, ...H.runs.filter((r) => /^R-\d+$/.test(r.id)).map((r) => +r.id.slice(2))) + 1).padStart(4, '0')}`;
+/** Pipelines that read from source `sid` (live pipelines read from every connector of their collections). */
+export const usesSource = (p: Pipeline, sid: string) => p.v.src === sid || !!(p.v as LivePipeCfg).kap?.conns.includes(sid);
 
 /** Why a pipeline cannot run now ('' = it can). */
 export function blockedBy(H: IngestTenant, p: Pipeline): string {
@@ -267,6 +272,8 @@ export const UNS_REQ = ['Text extraction / OCR', 'Chunking', 'Embedding generati
 export const firstStep = (ty: string) => (isDb(ty) ? 'Database extraction' : ty === 'REST API' ? 'API response parsing' : 'Parse files');
 
 export function stageCfg(s0: string, v: Partial<PipeCfg>): string {
+  const kap = (v as LivePipeCfg).kap;
+  if (kap) return kap.stages.find((x) => x.n === s0)?.cfg ?? '—';
   if (s0 === 'Chunking') return v.chunk ?? '—';
   if (s0.startsWith('Embedding')) return 'embed-prod · qwen3-embedding';
   if (s0 === 'Vector indexing') return 'Tenant vector index';
@@ -315,10 +322,14 @@ export function pipeDgm(v: Partial<PipeCfg>, ty: string, kind: Kind, o: DgmOpts 
           bad: !!r && r[1] === 'Failed',
         };
       });
+  // a KAP pipeline's stages are its own (name · type), not the design's catalogue
+  const kapL = (v as LivePipeCfg).kap?.stages.map((x) => x.n);
+  const sAll = kapL ?? STR_ALL(first);
+  const uAll = kapL ?? UNS_ALL;
   const lanes: [string, ReturnType<typeof laneItems>][] = [];
-  if (kind !== 'Unstructured') lanes.push(['s', laneItems(STR_ALL(first), v.sSteps || [])]);
-  if (kind !== 'Structured') lanes.push(['d', laneItems(UNS_ALL, v.uSteps || [])]);
-  const pre = RS ? o.stages!.map((s0) => s0[0]).filter((n0) => !STR_ALL(first).includes(n0) && !UNS_ALL.includes(n0)) : v.zip === 'Yes' ? ['Archive extraction'] : [];
+  if (kind !== 'Unstructured') lanes.push(['s', laneItems(sAll, v.sSteps || [])]);
+  if (kind !== 'Structured') lanes.push(['d', laneItems(uAll, v.uSteps || [])]);
+  const pre = RS ? o.stages!.map((s0) => s0[0]).filter((n0) => !sAll.includes(n0) && !uAll.includes(n0)) : v.zip === 'Yes' ? ['Archive extraction'] : [];
   const rowsOf = (it: unknown[]) => Math.max(1, Math.ceil(it.length / PER));
   let y = 10;
   const laneY = lanes.map(([, it]) => {

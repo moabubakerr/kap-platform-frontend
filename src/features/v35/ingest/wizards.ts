@@ -118,17 +118,30 @@ export function sourceRecord(v: FormValues, s: Source | null, actor: string): So
   return { rec, edit, ok: !!r.ok, newRef: v.cred === 'New reference…' ? v.newref : null };
 }
 
-export function sourceWizard(H: IngestTenant, s: Source | null, actor: string, save: (r: SourceSaved) => void): WizardSpec {
+export interface SourceWizardOpts {
+  /** start at the name step with this type */
+  preType?: string;
+  /** live tenant: the source is kept in this session only (KAP cannot store this type) */
+  sessionOnly?: boolean;
+}
+
+export function sourceWizard(H: IngestTenant, s: Source | null, actor: string, save: (r: SourceSaved) => void, o: SourceWizardOpts = {}): WizardSpec {
   const edit = !!s;
+  const types = o.sessionOnly ? SRC_TYPES.filter((x) => x !== 'S3') : SRC_TYPES;
   return {
-    title: edit ? `Edit ${s!.id}` : 'Create data source',
+    title: edit ? `Edit ${s!.id}` : o.sessionOnly ? 'Create data source · session only' : 'Create data source',
     steps: ['Source type', 'Name', 'Connection', 'Credentials', 'Test', 'Review'],
     finishL: edit ? 'Save changes' : 'Create data source',
-    initial: edit ? { type: s!.type, id: s!.id, desc: s!.desc, ...s!.cfg, auth: s!.auth, cred: s!.cred || 'Not needed (identity-based)', ident: s!.ident || '' } : { type: 'S3' },
+    initial: edit ? { type: s!.type, id: s!.id, desc: s!.desc, ...s!.cfg, auth: s!.auth, cred: s!.cred || 'Not needed (identity-based)', ident: s!.ident || '' } : { type: o.preType ?? types[0] },
+    initialStep: !edit && o.preType ? 1 : undefined,
     fields: (step, v, set) => {
       const ty: string = v.type;
       let f: FormField[];
-      if (step === 0) f = edit ? [{ k: 'type', label: 'Source type', type: 'text', ro: true }] : [{ k: 'type', label: 'Source type', type: 'select', opts: SRC_TYPES }];
+      if (step === 0)
+        f = [
+          ...(edit ? [{ k: 'type', label: 'Source type', type: 'text', ro: true } as FormField] : [{ k: 'type', label: 'Source type', type: 'select', opts: types } as FormField]),
+          ...(o.sessionOnly ? [{ type: 'note', tone: 'warn', text: `${ty || 'This type'} is not available in KAP. The source is kept in this browser session only; its connection test and runs are simulated.` } as FormField] : []),
+        ];
       else if (step === 1)
         f = [
           { k: 'id', label: 'Name', type: 'text', ro: edit, ph: 'e.g. sales_dwh', hint: edit ? 'The name cannot be changed because pipelines refer to it.' : 'Lower-case letters, digits and underscores.' },
@@ -178,7 +191,7 @@ export function sourceWizard(H: IngestTenant, s: Source | null, actor: string, s
       }
       return withDefaults(f, v);
     },
-    validate: (step, v) => validateSource(H, edit, step, v),
+    validate: (step, v) => (o.sessionOnly && step === 0 && v.type === 'S3' ? 'Create S3 sources in KAP.' : validateSource(H, edit, step, v)),
     finish: (v) => {
       save(sourceRecord(v, s, actor));
       return '';
@@ -284,9 +297,10 @@ export function pipeRecord(H: IngestTenant, v: FormValues, p: Pipeline | null): 
   return { rec, edit, runNow: v.first === 'Save and run now' && rec.on };
 }
 
-export function pipeWizard(H: IngestTenant, p: Pipeline | null, save: (r: PipeSaved) => void, preSource?: Source): WizardSpec {
+export function pipeWizard(H: IngestTenant, p: Pipeline | null, save: (r: PipeSaved) => void, preSource?: Source, sessionOnly?: boolean): WizardSpec {
   const edit = !!p;
-  const srcOpts = pipeSrcOpts(H);
+  // live tenant: a session-only pipeline reads from session-only sources (KAP pipelines get their files through collections)
+  const srcOpts = sessionOnly ? pipeSrcOpts({ ...H, sources: H.sources.filter((s) => (s as { sess?: boolean }).sess) }) : pipeSrcOpts(H);
   const colls = H.pub.colls.map((c) => c.id);
   const ONTO = H.onto;
   const initial: FormValues = edit
@@ -423,7 +437,7 @@ export function pipeWizard(H: IngestTenant, p: Pipeline | null, save: (r: PipeSa
   };
 
   return {
-    title: edit ? `Edit ${p!.id}` : 'Create pipeline',
+    title: edit ? `Edit ${p!.id}` : sessionOnly ? 'Create pipeline · session only' : 'Create pipeline',
     steps: ['General', 'Input', 'Processing', 'Output', 'Execution', 'Review'],
     finishL: edit ? 'Save changes' : 'Save pipeline',
     initial,

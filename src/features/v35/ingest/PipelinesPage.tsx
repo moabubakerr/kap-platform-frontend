@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { useCrumbs } from '@/app/shell/crumbs';
 import { ScreenView } from '@/engine/ScreenView';
+import { LiveBanner } from '@/v35/live';
 import { pipesScreen, type ListFilters } from './build';
 import { useIngest } from './useIngest';
 
@@ -9,5 +10,10 @@ export default function PipelinesPage() {
   const c = useIngest();
   const [f, setF] = React.useState<ListFilters>({});
   useCrumbs([]);
-  return <ScreenView model={pipesScreen(c, f, setF)} />;
+  return (
+    <>
+      <LiveBanner live={c.liveState} what="pipelines" />
+      <ScreenView model={pipesScreen(c, f, setF)} />
+    </>
+  );
 }
