@@ -8,6 +8,7 @@ import { act, cell, fr, kv } from '@/engine/build';
 import type { FormField, FormValues } from '@/engine/dialogs';
 import type { Action, DsStatus, Filters, PageHead, Row, ScreenModel, Section } from '@/engine/types';
 import type { AuditEvent } from '@/v35/data/audit';
+import { auditKv, auditRowOf, configRows, KAP_AREAS, SUBJECT_L, type KapAuditDetails, type KapAuditSummary, type KapConfigVersion } from './fromKap';
 import {
   assignedOf, LANGS, LN, langNames, SECRETS, SEED_AUDIT, REG_CONNS, REG_DEPS, telemetry, TN,
   type AdminData, type AdminTenant, type Alert, type AlertRule, type HistEntry, type PlatformKey, type RotState, type TenantCred, type Vault,
@@ -17,8 +18,8 @@ import {
 } from './logic';
 
 export interface AdminUi {
-  form: (title: string, fields: FormField[], saveL: string, save: (v: FormValues) => string) => void;
-  confirm: (title: string, body: string, items: { a: string; b?: string; c?: string }[], cta: string, fn: () => void) => void;
+  form: (title: string, fields: FormField[], saveL: string, save: (v: FormValues) => string | Promise<string>) => void;
+  confirm: (title: string, body: string, items: { a: string; b?: string; c?: string }[], cta: string, fn: () => void | Promise<void | string>) => void;
   info: (title: string, body: string, items?: { a: string; b?: string; c?: string }[]) => void;
   toast: (msg: string) => void;
 }
@@ -461,41 +462,89 @@ export function monitoringScreen(c: AdminCtx): ScreenModel {
 }
 
 // ================================================================ UNIFIED AUDIT LOG (platform and tenant)
-export interface AuditRow { when: string; age: number; who: string; tk: string[]; ten: string; area: string; action: string; res: string }
-export type AuditFilters = Partial<Record<'who' | 'ten' | 'area' | 'time' | 'q', string>>;
+export interface AuditRow {
+  when: string;
+  age: number;
+  who: string;
+  tk: string[];
+  ten: string;
+  area: string;
+  action: string;
+  res: string;
+  /** epoch ms, for ordering session and KAP events together */
+  ts?: number;
+  /** set for events read from KAP's audit log */
+  kap?: { id: string; type: string; failed: boolean };
+}
+/** `res` (result) and `subj` (subject type) are offered for the live tenant only: KAP filters on them. */
+export type AuditFilters = Partial<Record<'who' | 'ten' | 'area' | 'time' | 'q' | 'res' | 'subj', string>>;
+
+/** The live tenant's KAP audit page and its controls (see TenantAuditPage). */
+export interface KapAuditView {
+  /** events of the current KAP page (already filtered by KAP) */
+  events: KapAuditSummary[];
+  total: number;
+  offset: number;
+  limit: number;
+  setPage: (offset: number, limit: number) => void;
+  /** event whose details panel is open */
+  openId: string | null;
+  open: (id: string) => void;
+  details: Record<string, KapAuditDetails | { err: string }>;
+  now: number;
+}
+/** kv() for [key, value, mono?] lines built in fromKap.ts. */
+const kv3 = (xs: [string, string, boolean?][]) => kv(xs.map(([k, v, m]): [string, string, boolean] => [k, v, !!m]));
 const tenL = (tk: string[]) => (tk.length ? tk.map((t) => TN[t] || t).join(', ') : 'Platform');
 const hhmm = (iso: string) => {
   const d = new Date(iso);
   return Number.isNaN(d.getTime()) ? iso : d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
 };
 
-/** Live session events (newest first) followed by the seed events; tenant scope keeps only the tenant's events. */
-export function auditRows(events: AuditEvent[], T: string | null): AuditRow[] {
-  const live: AuditRow[] = events.map((e) => ({ when: `Today · ${hhmm(e.at)}`, age: 0, who: e.who, tk: e.tenants ?? [], ten: tenL(e.tenants ?? []), area: e.area || (e.lvl === 'tenant' ? 'Tenant' : 'Platform Administration'), action: e.action, res: e.res }));
-  const seed: AuditRow[] = SEED_AUDIT.map((e) => ({ ...e, ten: tenL(e.tk) }));
-  return [...live, ...seed].filter((e) => !T || e.tk.includes(T));
+/**
+ * Session events (newest first) followed by the seed events; tenant scope keeps
+ * only the tenant's events. `seed: false` for the live tenant: its history
+ * comes from KAP, not from the design's sample events.
+ */
+export function auditRows(events: AuditEvent[], T: string | null, seed = true): AuditRow[] {
+  const live: AuditRow[] = events.map((e) => ({ when: `Today · ${hhmm(e.at)}`, age: 0, ts: Date.parse(e.at) || 0, who: e.who, tk: e.tenants ?? [], ten: tenL(e.tenants ?? []), area: e.area || (e.lvl === 'tenant' ? 'Tenant' : 'Platform Administration'), action: e.action, res: e.res }));
+  const S: AuditRow[] = seed ? SEED_AUDIT.map((e) => ({ ...e, ten: tenL(e.tk) })) : [];
+  return [...live, ...S].filter((e) => !T || e.tk.includes(T));
 }
 
-export function auditScreen(c: AdminCtx, isT: boolean, F: AuditFilters, setF: (f: AuditFilters) => void): ScreenModel {
+/**
+ * Unified Audit Log. With `K` (live tenant) the console's session events are
+ * merged with the current page of KAP's audit log: KAP applies the area, time,
+ * result and subject filters itself; actor and free text filter the page here.
+ */
+export function auditScreen(c: AdminCtx, isT: boolean, F: AuditFilters, setF: (f: AuditFilters) => void, K?: KapAuditView): ScreenModel {
   const T = isT ? c.T : null;
   if (isT && !T) return noTenant('Unified Audit Log');
-  const ALLE = auditRows(c.events, T);
-  const uniq = (k: 'who' | 'area') => ['Any', ...new Set(ALLE.map((e) => e[k]))];
+  const SES = auditRows(c.events, T, !K);
+  const KR = K && T ? K.events.map((e) => auditRowOf(e, TN[T] || T, K.now)) : [];
+  const ALLE = K ? [...SES, ...KR].sort((a, b) => (b.ts ?? 0) - (a.ts ?? 0)) : SES;
+  const uniq = (k: 'who' | 'area', extra: string[] = []) => ['Any', ...new Set([...ALLE.map((e) => e[k]), ...extra])];
   const tmax = ({ 'Any time': 1e9, Today: 1, 'Last 7 days': 7, 'Last 30 days': 30 } as Record<string, number>)[F.time || 'Any time'] ?? 1e9;
   const any = (x?: string) => !x || x === 'Any';
   const rows = ALLE.filter(
     (e) =>
       (any(F.who) || e.who === F.who) &&
       (isT || any(F.ten) || e.ten.includes(F.ten!)) &&
-      (any(F.area) || e.area === F.area) &&
-      e.age <= tmax &&
-      (!F.q || `${e.res} ${e.action}`.toLowerCase().includes(F.q.toLowerCase())),
+      // KAP rows were filtered by KAP (area, time, result, subject)
+      (e.kap ? true : (any(F.area) || e.area === F.area) && e.age <= tmax && (any(F.res) || F.res === 'Success') && (any(F.subj) || F.subj === SUBJECT_L.user)) &&
+      (!F.q || `${e.res} ${e.action} ${e.kap?.type ?? ''}`.toLowerCase().includes(F.q.toLowerCase())),
   );
   const defs: [keyof AuditFilters, string, string[]][] = [
     ['who', 'Actor', uniq('who')],
     ...(isT ? [] : [['ten', 'Tenant', ['Any', 'Platform', 'SCEAI', 'Economic Affairs', 'sandbox']] as [keyof AuditFilters, string, string[]]]),
-    ['area', 'Operation area', uniq('area')],
+    ['area', 'Operation area', uniq('area', K ? KAP_AREAS : [])],
     ['time', 'Time', ['Any time', 'Today', 'Last 7 days', 'Last 30 days']],
+    ...(K
+      ? ([
+          ['res', 'Result', ['Any', 'Success', 'Failure']],
+          ['subj', 'Subject', ['Any', ...Object.values(SUBJECT_L)]],
+        ] as [keyof AuditFilters, string, string[]][])
+      : []),
   ];
   const filters: Filters = {
     q: F.q ?? '',
@@ -504,12 +553,37 @@ export function auditScreen(c: AdminCtx, isT: boolean, F: AuditFilters, setF: (f
     main: defs.map(([k, label, options]) => ({ label, value: F[k] || options[0], options, onChange: (v: string) => setF({ ...F, [k]: v }) })),
     chips: defs.filter(([k, , o]) => F[k] && F[k] !== o[0]).map(([k]) => ({ l: F[k]!, x: () => setF({ ...F, [k]: '' }) })),
     clear: () => setF({}),
-    count: `${rows.length} events`,
+    count: K ? `${rows.filter((e) => e.kap).length} of ${K.total} KAP events · ${rows.filter((e) => !e.kap).length} console events` : `${rows.length} events`,
   };
   const exportAll = () => {
     c.ui.toast(`Exported ${rows.length} events as CSV.`);
     evOf(c, isT ? 'tenant' : 'platform')('Exported audit events', `${rows.length} events`, T ? [T] : [], 'Unified Audit Log');
   };
+  let seq = 0;
+  const kapById = new Map((K?.events ?? []).map((e) => [e.id, e]));
+  const rowOf = (e: AuditRow): Row => {
+    const cells = [
+      cell(e.when, K ? { sub: e.kap ? 'KAP' : 'Console session', tip: e.kap ? 'Read from the KAP audit log' : 'Recorded by this console session; not in KAP' } : undefined),
+      cell(e.who, { m: true, tip: e.kap ? 'KAP records the subject type and id, not the name' : undefined }),
+      ...(isT ? [] : [cell(e.ten)]),
+      cell(e.area),
+      cell(e.action, e.kap ? { sub: e.kap.failed ? 'Failed' : undefined, tip: e.kap.type } : undefined),
+      cell(e.res),
+    ];
+    if (e.kap && K) {
+      const id = e.kap.id;
+      const src = kapById.get(id)!;
+      // KAP rows open their details panel through the page, which loads the event's details on open
+      return K.openId === id ? { key: `kap:${id}`, cells, kv: kv3(auditKv(src, K.details[id])), keepKv: true } : { key: `kap:${id}`, cells, onClick: () => K.open(id) };
+    }
+    const i = seq++;
+    return {
+      key: `ev:${i}${e.when}${e.res}`,
+      cells,
+      kv: kv([['Scope', isT ? (e.tk.length ? 'Tenant' : 'Platform') : e.ten], ...(K ? [['Source', 'Console session · not recorded in KAP'] as [string, string]] : [['Record', `AUD-${48210 - i}`] as [string, string], ['Integrity', 'Hash-chained · signed with audit-signing'] as [string, string]])]),
+    };
+  };
+  const pages = K ? Math.max(1, Math.ceil(K.total / K.limit)) : 1;
   return {
     head: { title: 'Unified Audit Log', add: act('Export', exportAll, 'primary') },
     filters,
@@ -517,11 +591,21 @@ export function auditScreen(c: AdminCtx, isT: boolean, F: AuditFilters, setF: (f
       {
         cols: isT ? ['When', 'Actor', 'Area', 'Operation', 'Resource'] : ['When', 'Actor', 'Tenant', 'Area', 'Operation', 'Resource'],
         empty: 'No events match the filters.',
-        rows: rows.map((e, i): Row => ({
-          key: `ev:${i}${e.when}${e.res}`,
-          cells: [cell(e.when), cell(e.who, { m: true }), ...(isT ? [] : [cell(e.ten)]), cell(e.area), cell(e.action), cell(e.res)],
-          kv: kv([['Scope', isT ? (e.tk.length ? 'Tenant' : 'Platform') : e.ten], ['Record', `AUD-${48210 - i}`], ['Integrity', 'Hash-chained · signed with audit-signing']]),
-        })),
+        mode: 'panel',
+        openKey: K?.openId ? `kap:${K.openId}` : undefined,
+        rows: rows.map(rowOf),
+        pager: K
+          ? {
+              l: K.total ? `KAP events ${K.offset + 1}–${Math.min(K.offset + K.events.length, K.total)} of ${K.total}` : 'No KAP events match the filters',
+              size: K.limit,
+              setSize: (n) => K.setPage(0, n),
+              pg: `Page ${Math.floor(K.offset / K.limit) + 1} of ${pages}`,
+              prev: () => K.setPage(Math.max(0, K.offset - K.limit), K.limit),
+              next: () => K.setPage(K.offset + K.limit, K.limit),
+              prevOff: K.offset === 0,
+              nextOff: K.offset + K.limit >= K.total,
+            }
+          : undefined,
       },
     ],
   };
@@ -829,7 +913,45 @@ export function tChange(c: AdminCtx, key: string, nv: string, toast?: string): s
   return '';
 }
 
-export function tenantConfigScreen(c: AdminCtx, tab0: string | undefined, setTab: (t: string) => void): ScreenModel {
+/** The live tenant's KAP configuration history and its actions (see TenantConfigPage). */
+export interface KapConfigView {
+  versions: KapConfigVersion[];
+  /** show the rollback plan of a version */
+  preview: (v: KapConfigVersion) => void;
+  /** preview, confirm, then roll back to a version */
+  rollback: (v: KapConfigVersion) => void;
+}
+
+export const SESSION_ONLY_NOTE = 'Session only for this live tenant: KAP has no API for these settings. Changes here are kept in this browser session and are not written to KAP. Configuration History shows the real KAP configuration versions.';
+
+/** Configuration History of the live tenant: KAP configuration versions with preview and roll back. */
+function kapHistory(canT: boolean, K: KapConfigView): Section[] {
+  const byId = new Map(K.versions.map((v) => [v.id, v]));
+  return [
+    {
+      title: 'Configuration versions',
+      tip: 'Each version is a snapshot of the whole tenant configuration in KAP (agents, collections, connectors, pipelines, model providers, MCP servers, roles, groups and execution parameters). A rollback restores a whole version as a new version.',
+      cols: ['Version', 'Source', 'Changed by', 'When', 'Restored from', 'Status'],
+      empty: 'KAP has no configuration versions for this tenant yet.',
+      mode: 'panel',
+      rows: configRows(K.versions).map((h): Row => {
+        const v = byId.get(h.id)!;
+        const can = canT && !h.current;
+        return {
+          key: `kcv:${h.id}`,
+          cells: [cell(h.v, { m: true }), cell(h.source), cell(h.by, { m: !h.by.includes(' ') }), cell(h.at), cell(h.from), cell('', { p: h.current ? ['approved', 'Current'] : ['draft', 'Superseded'] })],
+          kv: kv3(h.kv),
+          keepKv: true,
+          quick: can ? [act('Preview rollback', () => K.preview(v))] : [],
+          acts: can ? [act('Preview rollback', () => K.preview(v)), act('Roll back…', () => K.rollback(v), 'primary')] : [],
+          lockTip: !canT ? 'Needs tenant:configure' : undefined,
+        };
+      }),
+    },
+  ];
+}
+
+export function tenantConfigScreen(c: AdminCtx, tab0: string | undefined, setTab: (t: string) => void, K?: KapConfigView): ScreenModel {
   const T = c.T;
   if (!T) return noTenant('Tenant Configuration');
   const canT = c.canT;
@@ -980,12 +1102,14 @@ export function tenantConfigScreen(c: AdminCtx, tab0: string | undefined, setTab
       { title: 'Erasure requests', cols: ['Request', 'Scope', 'Status', 'Completed'], empty: 'No erasure requests.', mode: 'inline', rows: TC.erasure.map((e): Row => ({ key: `er:${e[0]}`, cells: [cell(e[0], { m: true }), cell(e[1]), cell(e[2]), cell(e[3])] })) },
     ];
   if (tab === 'history')
-    sections = [
-      histTable(c, TC.hist, (k) => tGet(TC, k), canT, (h) => {
-        const err = tChange(c, h.key, h.old, `Rolled back ${h.key} to "${h.old}".`);
-        if (err) c.ui.toast(err);
-      }, 'th:'),
-    ];
+    sections = K
+      ? kapHistory(canT, K)
+      : [
+          histTable(c, TC.hist, (k) => tGet(TC, k), canT, (h) => {
+            const err = tChange(c, h.key, h.old, `Rolled back ${h.key} to "${h.old}".`);
+            if (err) c.ui.toast(err);
+          }, 'th:'),
+        ];
   return { head, sections };
 }
 

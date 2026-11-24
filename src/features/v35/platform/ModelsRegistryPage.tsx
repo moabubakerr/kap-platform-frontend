@@ -19,12 +19,18 @@ import {
 } from './build';
 import { AdvToggle, Chip, DetailsBtn, ErrBanner, KvLines, Modal, Seg, SelectIn, TestBanner, TextIn, thCls, theadCls, useBanner, type TestState } from './ui';
 import { usePlatform } from './usePlatform';
+import { kap, kapError } from '@/api/kap';
+import { LiveBanner, liveSave } from '@/v35/live';
+import { applyCheck, checkMsg, kapCfg, LIVE_TENANT, providerFields, toKapCreate, toKapPatch, type KapModelProvider, type KapProviderCheck } from './fromKap';
+import { kapModelsStore, useKapModels } from './useKapModels';
 
 const toItems = (xs: DepUse[]) => xs.map((u) => ({ a: u.t, b: u.k, c: u.n }));
 
 export default function ModelsRegistryPage() {
   const P = usePlatform('Model Providers Registry');
   const R = registryStore.use();
+  const { live, kapm } = useKapModels();
+  const kp = (id: string): KapModelProvider | undefined => kapm.byDep[id];
   const { tab } = useParams();
   const [q, setQ] = React.useState('');
   const [open, setOpen] = React.useState<string | null>(tab && R.deps.some((x) => x.id === tab) ? tab : null);
@@ -50,8 +56,61 @@ export default function ModelsRegistryPage() {
   const rows = depRows(R, q);
   const sel = open ? R.deps.find((x) => x.id === open) : undefined;
 
+  // ---- live entries: the sandbox tenant's KAP model providers
+  const tid = live.tenantId;
+  const kapAudit = (action: string, res: string) => P.audit([{ action, res: `${res} · KAP`, tenants: [LIVE_TENANT] }]);
+  const k = {
+    test: (d: Dep, p: KapModelProvider) => {
+      if (!tid) return;
+      setTest({ s: 'busy', m: undefined });
+      kap<KapProviderCheck>(tid, 'POST', `model-providers/${p.id}/check`).then(
+        (c) => {
+          kapModelsStore.update((s) => void (s.checks[p.id] = c));
+          registryStore.set(applyCheck(registryStore.get(), d.id, p, c));
+          setTest({ s: c.status === 'ok' ? 'ok' : 'fail', m: checkMsg(c) });
+        },
+        (e) => setTest({ s: 'fail', m: `KAP check failed: ${kapError(e)}` }),
+      );
+    },
+    edit: (d: Dep, p: KapModelProvider) =>
+      P.d.form(`Edit KAP model provider · ${d.id}`, providerFields(p), 'Save', async (v) => {
+        const r = toKapPatch(p, v);
+        if ('err' in r) return r.err;
+        if (!Object.keys(r.body).length) return 'No change.';
+        return liveSave(live, () => kap(tid!, 'PATCH', `model-providers/${p.id}`, r.body), () => {
+          banner.show(`Model provider "${p.name}" saved in KAP.`);
+          kapAudit('Updated model', `${p.name} · ${Object.keys(r.body).join(', ')}`);
+          setTest(null);
+        });
+      }),
+    del: (d: Dep, p: KapModelProvider) =>
+      P.d.confirm(
+        `Delete ${d.id}?`,
+        'KAP deactivates the provider and revokes its access assignments; the key stays in the secret store. Creating a provider with the same name brings it back. KAP refuses while an agent or another resource uses it, and names them.',
+        [],
+        'Delete',
+        () =>
+          liveSave(live, () => kap(tid!, 'DELETE', `model-providers/${p.id}`), () => {
+            banner.show(`Model provider "${p.name}" deleted in KAP.`);
+            kapAudit('Deleted model', p.name);
+            pick(null);
+          }),
+      ),
+    add: () =>
+      P.d.form('Add model provider · sandbox (KAP)', providerFields(null), 'Create', async (v) => {
+        const r = toKapCreate(v);
+        if ('err' in r) return r.err;
+        return liveSave(live, () => kap(tid!, 'POST', 'model-providers', r.body), () => {
+          banner.show(`Model provider "${String(r.body.name)}" created in KAP for sandbox. Run Test to check it.`);
+          kapAudit('Added model', `${String(r.body.name)} · ${String(r.body.model_type)}`);
+        });
+      }),
+  };
+
   const a = {
     test: (d: Dep) => {
+      const p = kp(d.id);
+      if (p) return k.test(d, p);
       if (d.status !== 'Active') return setTest({ s: 'fail', m: 'Test not run · the model is disabled.' });
       setTest({ s: 'busy' });
       window.clearTimeout(timer.current);
@@ -74,6 +133,8 @@ export default function ModelsRegistryPage() {
       P.d.confirm(`Disable ${d.id}?`, items.length ? 'These will stop working until they use another model:' : 'Not in use.', toItems(items), 'Disable', () => apply(setDepStatus(registryStore.get(), d.id, false)));
     },
     del: (d: Dep) => {
+      const p = kp(d.id);
+      if (p) return k.del(d, p);
       const items = depsOf(R, d);
       if (items.length) return P.d.info(`Delete ${d.id}?`, 'Still in use. Move these to another model first:', toItems(items));
       P.d.confirm(`Delete ${d.id}?`, 'This can’t be undone.', [], 'Delete', () => {
@@ -116,11 +177,24 @@ export default function ModelsRegistryPage() {
       <div className="flex flex-wrap items-center justify-between gap-4">
         <h1 className="h1">Model Providers Registry</h1>
         {P.pEdit && (
-          <Button size="sm" onClick={() => { setTest(null); setForm({ mode: 'add', v: blankModel(R, 'LLM') }); }}>
-            <Plus size={15} /> Add model
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            {live.on && (
+              <Button size="sm" variant="outline" onClick={k.add} title="Creates a model provider in KAP for the sandbox tenant">
+                <Plus size={15} /> Add KAP provider · sandbox
+              </Button>
+            )}
+            <Button size="sm" onClick={() => { setTest(null); setForm({ mode: 'add', v: blankModel(R, 'LLM') }); }}>
+              <Plus size={15} /> Add model
+            </Button>
+          </div>
         )}
       </div>
+      {live.on && (
+        <div>
+          <LiveBanner live={live} what="sandbox model providers" />
+          <div className="-mt-1 text-[12.5px] text-ink-muted">Entries marked Live · KAP are the sandbox tenant’s KAP model providers: test, edit and delete act in KAP. The other entries are the design’s sample registry (session only).</div>
+        </div>
+      )}
       {banner.node}
       <div className="w-[320px] max-w-full">
         <input type="search" value={q} placeholder="Search models" onChange={(e) => setQ(e.target.value)} className="h-9 w-full rounded-card border border-line bg-surface px-3 text-[13.5px] outline-none focus-visible:shadow-focus" />
@@ -144,7 +218,10 @@ export default function ModelsRegistryPage() {
               return (
                 <tr key={r.d.id} onClick={() => pick(o ? null : r.d.id)} className="cursor-pointer border-t border-line-subtle hover:bg-surface-hover" style={{ background: o ? 'var(--brand-tint)' : undefined, boxShadow: `inset 3px 0 0 ${o ? 'var(--brand)' : 'transparent'}` }}>
                   <td className="px-3 py-2.5">
-                    <div className="font-mono text-[12.5px] font-semibold text-ink-strong">{r.d.id}</div>
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono text-[12.5px] font-semibold text-ink-strong">{r.d.id}</span>
+                      {kp(r.d.id) && <span className="rounded-sm bg-info-bg px-1.5 py-px text-[11px] font-medium text-info" title="A KAP model provider of the sandbox tenant">Live · KAP</span>}
+                    </div>
                     <div className="text-xs text-ink-muted">{r.d.model}</div>
                   </td>
                   <td className="px-3 py-2.5">{r.ty}</td>
@@ -164,7 +241,24 @@ export default function ModelsRegistryPage() {
         {!rows.length && <div className="p-8 text-center text-ink-muted">No models found.</div>}
       </div>
 
-      {sel && <DepDetails R={R} d={sel} pEdit={P.pEdit} test={test} a={a} close={() => pick(null)} edit={() => { setTest(null); setForm(editModel(R, sel)); }} audit={() => P.goP('pAudit')} />}
+      {sel && (
+        <DepDetails
+          R={R}
+          d={sel}
+          kp={kp(sel.id)}
+          pEdit={P.pEdit}
+          test={test}
+          a={a}
+          close={() => pick(null)}
+          edit={() => {
+            const p = kp(sel.id);
+            if (p) return k.edit(sel, p);
+            setTest(null);
+            setForm(editModel(R, sel));
+          }}
+          audit={() => P.goP('pAudit')}
+        />
+      )}
       {form && (
         <ModelFormDialog
           R={R}
@@ -182,11 +276,12 @@ export default function ModelsRegistryPage() {
   );
 }
 
-function DepDetails({ R, d, pEdit, test, a, close, edit, audit }: {
-  R: Registry; d: Dep; pEdit: boolean; test: TestState; close: () => void; edit: () => void; audit: () => void;
+function DepDetails({ R, d, kp, pEdit, test, a, close, edit, audit }: {
+  R: Registry; d: Dep; kp?: KapModelProvider; pEdit: boolean; test: TestState; close: () => void; edit: () => void; audit: () => void;
   a: { test: (d: Dep) => void; toggle: (d: Dep) => void; del: (d: Dep) => void; tenant: (d: Dep, k: TKey | 'all') => void; kill: (d: Dep) => void };
 }) {
   const r = depRow(R, d);
+  if (kp) return <KapDepDetails r={r} d={d} kp={kp} pEdit={pEdit} test={test} a={a} close={close} edit={edit} />;
   return (
     <Modal
       title={d.id}
@@ -248,6 +343,68 @@ function DepDetails({ R, d, pEdit, test, a, close, edit, audit }: {
                   </div>
                 ))}
                 {!r.uses.length && <div className="text-[12.5px] text-ink-muted">Not in use</div>}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+/** Details of a live entry (a KAP model provider of the sandbox tenant). */
+function KapDepDetails({ r, d, kp, pEdit, test, a, close, edit }: {
+  r: ReturnType<typeof depRow>; d: Dep; kp: KapModelProvider; pEdit: boolean; test: TestState; close: () => void; edit: () => void;
+  a: { test: (d: Dep) => void; del: (d: Dep) => void };
+}) {
+  return (
+    <Modal
+      title={d.id}
+      mono
+      sub={`${d.model} · ${r.ty} · KAP model provider`}
+      onClose={close}
+      footer={
+        <>
+          {pEdit && (
+            <>
+              <Button size="sm" variant="outline" onClick={() => a.test(d)} disabled={test?.s === 'busy'}><Zap size={14} /> Test</Button>
+              <Button size="sm" variant="outline" onClick={edit}><Pencil size={14} /> Edit</Button>
+              <Button size="sm" variant="ghost" onClick={() => a.del(d)}>Delete</Button>
+            </>
+          )}
+          <Button size="sm" variant="outline" onClick={close}>Close</Button>
+        </>
+      }
+    >
+      <div className="p-1 pb-4">
+        <div className="rounded-card border border-line bg-surface">
+          <div className="flex flex-col gap-2 px-4 pt-2 empty:hidden">{test && <TestBanner t={test} busyL="Checking in KAP…" />}</div>
+          <div className="mt-2 grid grid-cols-3 border-y border-line-subtle sm:grid-cols-6">
+            {r.ops.map(([k, v]) => (
+              <div key={k} className="min-w-0 border-r border-line-subtle px-4 py-2.5">
+                <div className="text-[11.5px] text-ink-muted">{k}</div>
+                <div className="truncate text-[13px] font-medium text-ink-strong" title={v}>{v}</div>
+              </div>
+            ))}
+          </div>
+          <div className="grid gap-6 px-4 pb-4 pt-3" style={{ gridTemplateColumns: 'minmax(0,1.3fr) minmax(0,1fr)' }}>
+            <div>
+              <div className="mb-1 text-[13px] font-semibold text-ink-strong">Configuration</div>
+              <KvLines rows={kapCfg(kp)} />
+            </div>
+            <div className="flex flex-col gap-4">
+              <div>
+                <div className="mb-2 text-[13px] font-semibold text-ink-strong">Tenant availability</div>
+                <div className="flex flex-wrap gap-1.5"><Chip n={TN[LIVE_TENANT]} on toggle={() => {}} ro /></div>
+                <div className="mt-1.5 text-[12.5px] text-ink-muted">KAP model providers belong to one tenant: this one is the sandbox tenant’s and can’t be offered to other tenants.</div>
+              </div>
+              <div>
+                <div className="mb-1.5 text-[13px] font-semibold text-ink-strong">Used by</div>
+                <div className="text-[12.5px] text-ink-muted">KAP does not list the agents and collections that use a provider here. Deleting or renaming it is refused while one does, and KAP names them.</div>
+              </div>
+              <div>
+                <div className="mb-1.5 text-[13px] font-semibold text-ink-strong">Not in KAP</div>
+                <div className="text-[12.5px] text-ink-muted">Enable/disable and emergency disable, capabilities beyond the model type, and request, latency and utilisation figures. Health comes from the last Test (KAP check) in this session.</div>
               </div>
             </div>
           </div>
