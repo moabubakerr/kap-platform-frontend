@@ -1,0 +1,215 @@
+   Single Window — Fonts
+   Lusail (official bilingual Arabic + Latin typeface, self-hosted
+   from assets/fonts/) is the system's core face for all UI and
+   headings. IBM Plex Mono remains for reference numbers and codes.
+   ============================================================ */
+   Single Window — Typography tokens
+   ============================================================ */
+:root {
+  /* Families */
+  --font-sans: "Lusail", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-arabic: "Lusail", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  /* Weights */
+  --weight-light: 300;
+  --weight-regular: 400;
+  --weight-medium: 500;
+  --weight-semibold: 700; /* Lusail ships Light/Regular/Medium/Bold — semibold maps to Bold */
+  --weight-bold: 700;
+  /* Type scale (1.20 minor third, 16px base) */
+  --text-2xs: 0.6875rem;  /* 11px — micro labels, table meta */
+  --text-xs:  0.75rem;    /* 12px — captions, badges */
+  --text-sm:  0.875rem;   /* 14px — secondary, dense UI */
+  --text-base: 1rem;      /* 16px — body */
+  --text-md:  1.125rem;   /* 18px — lead body */
+  --text-lg:  1.375rem;   /* 22px — card titles */
+  --text-xl:  1.75rem;    /* 28px — section titles */
+  --text-2xl: 2.25rem;    /* 36px — page headers */
+  --text-3xl: 3rem;       /* 48px — hero */
+  --text-4xl: 3.75rem;    /* 60px — display */
+  /* Line heights */
+  --leading-tight: 1.15;
+  --leading-snug: 1.3;
+  --leading-normal: 1.5;
+  --leading-relaxed: 1.65;
+  /* Letter spacing */
+  --tracking-tight: -0.02em;
+  --tracking-snug: -0.01em;
+  --tracking-normal: 0;
+  --tracking-wide: 0.04em;
+  --tracking-caps: 0.08em; /* eyebrow / overline uppercase */
+  /* Semantic roles */
+  --display-size: var(--text-4xl);
+  --display-weight: var(--weight-bold);
+  --display-leading: var(--leading-tight);
+  --display-tracking: var(--tracking-tight);
+  --h1-size: var(--text-2xl);
+  --h2-size: var(--text-xl);
+  --h3-size: var(--text-lg);
+  --body-size: var(--text-base);
+  --body-leading: var(--leading-normal);
+  --eyebrow-size: var(--text-xs);
+  --eyebrow-tracking: var(--tracking-caps);
+}
+   Single Window — Spacing, radii, shadows, borders, layout
+   ============================================================ */
+:root {
+  /* Spacing scale (4px base grid) */
+  --space-0: 0;
+  --space-1: 0.25rem;   /* 4 */
+  --space-2: 0.5rem;    /* 8 */
+  --space-3: 0.75rem;   /* 12 */
+  --space-4: 1rem;      /* 16 */
+  --space-5: 1.5rem;    /* 24 */
+  --space-6: 2rem;      /* 32 */
+  --space-7: 2.5rem;    /* 40 */
+  --space-8: 3rem;      /* 48 */
+  --space-9: 4rem;      /* 64 */
+  --space-10: 5rem;     /* 80 */
+  --space-12: 6rem;     /* 96 */
+  /* Radii — restrained, institutional. Sharp-ish cards, soft controls. */
+  --radius-xs: 3px;
+  --radius-sm: 5px;
+  --radius-md: 8px;   /* default control / card */
+  --radius-lg: 12px;  /* large cards, modals */
+  --radius-xl: 18px;
+  --radius-pill: 999px;
+  --radius-hex: 0; /* the mark itself is angular; UI stays gentle */
+  /* Borders */
+  --border-width: 1px;
+  --border-width-strong: 1.5px;
+  --border-width-accent: 3px; /* left/top emphasis on alerts */
+  /* Shadows — soft, cool-tinted, low spread. No heavy drop shadows. */
+  --shadow-xs: 0 1px 2px rgba(13, 22, 38, 0.06);
+  --shadow-sm: 0 1px 3px rgba(13, 22, 38, 0.08), 0 1px 2px rgba(13, 22, 38, 0.04);
+  --shadow-md: 0 4px 12px rgba(13, 22, 38, 0.08), 0 1px 3px rgba(13, 22, 38, 0.05);
+  --shadow-lg: 0 12px 28px rgba(13, 22, 38, 0.12), 0 4px 8px rgba(13, 22, 38, 0.06);
+  --shadow-xl: 0 24px 56px rgba(6, 50, 95, 0.18);
+  --shadow-focus: var(--focus-ring);
+  /* Layout */
+  --container-max: 1200px;
+  --container-wide: 1400px;
+  --sidebar-width: 264px;
+  --topbar-height: 64px;
+  --content-gutter: var(--space-6);
+  /* Motion */
+  --ease-standard: cubic-bezier(0.2, 0, 0.2, 1); /* @kind other */
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1); /* @kind other */
+  --ease-in: cubic-bezier(0.4, 0, 1, 1); /* @kind other */
+  --duration-fast: 120ms; /* @kind other */
+  --duration-base: 200ms; /* @kind other */
+  --duration-slow: 320ms; /* @kind other */
+}
+   Single Window Design System — global entry point.
+   Consumers link THIS file only. Imports must reach every
+   token + font-face file. Keep this as @import lines only.
+   ============================================================ */
+   Single Window — Fonts
+   Lusail (official bilingual Arabic + Latin typeface, self-hosted
+   from assets/fonts/) is the system's core face for all UI and
+   headings. IBM Plex Mono remains for reference numbers and codes.
+   ============================================================ */
+   Single Window — Typography tokens
+   ============================================================ */
+:root {
+  /* Families */
+  --font-sans: "Lusail", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-arabic: "Lusail", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  /* Weights */
+  --weight-light: 300;
+  --weight-regular: 400;
+  --weight-medium: 500;
+  --weight-semibold: 700; /* Lusail ships Light/Regular/Medium/Bold — semibold maps to Bold */
+  --weight-bold: 700;
+  /* Type scale (1.20 minor third, 16px base) */
+  --text-2xs: 0.6875rem;  /* 11px — micro labels, table meta */
+  --text-xs:  0.75rem;    /* 12px — captions, badges */
+  --text-sm:  0.875rem;   /* 14px — secondary, dense UI */
+  --text-base: 1rem;      /* 16px — body */
+  --text-md:  1.125rem;   /* 18px — lead body */
+  --text-lg:  1.375rem;   /* 22px — card titles */
+  --text-xl:  1.75rem;    /* 28px — section titles */
+  --text-2xl: 2.25rem;    /* 36px — page headers */
+  --text-3xl: 3rem;       /* 48px — hero */
+  --text-4xl: 3.75rem;    /* 60px — display */
+  /* Line heights */
+  --leading-tight: 1.15;
+  --leading-snug: 1.3;
+  --leading-normal: 1.5;
+  --leading-relaxed: 1.65;
+  /* Letter spacing */
+  --tracking-tight: -0.02em;
+  --tracking-snug: -0.01em;
+  --tracking-normal: 0;
+  --tracking-wide: 0.04em;
+  --tracking-caps: 0.08em; /* eyebrow / overline uppercase */
+  /* Semantic roles */
+  --display-size: var(--text-4xl);
+  --display-weight: var(--weight-bold);
+  --display-leading: var(--leading-tight);
+  --display-tracking: var(--tracking-tight);
+  --h1-size: var(--text-2xl);
+  --h2-size: var(--text-xl);
+  --h3-size: var(--text-lg);
+  --body-size: var(--text-base);
+  --body-leading: var(--leading-normal);
+  --eyebrow-size: var(--text-xs);
+  --eyebrow-tracking: var(--tracking-caps);
+}
+   Single Window — Spacing, radii, shadows, borders, layout
+   ============================================================ */
+:root {
+  /* Spacing scale (4px base grid) */
+  --space-0: 0;
+  --space-1: 0.25rem;   /* 4 */
+  --space-2: 0.5rem;    /* 8 */
+  --space-3: 0.75rem;   /* 12 */
+  --space-4: 1rem;      /* 16 */
+  --space-5: 1.5rem;    /* 24 */
+  --space-6: 2rem;      /* 32 */
+  --space-7: 2.5rem;    /* 40 */
+  --space-8: 3rem;      /* 48 */
+  --space-9: 4rem;      /* 64 */
+  --space-10: 5rem;     /* 80 */
+  --space-12: 6rem;     /* 96 */
+  /* Radii — restrained, institutional. Sharp-ish cards, soft controls. */
+  --radius-xs: 3px;
+  --radius-sm: 5px;
+  --radius-md: 8px;   /* default control / card */
+  --radius-lg: 12px;  /* large cards, modals */
+  --radius-xl: 18px;
+  --radius-pill: 999px;
+  --radius-hex: 0; /* the mark itself is angular; UI stays gentle */
+  /* Borders */
+  --border-width: 1px;
+  --border-width-strong: 1.5px;
+  --border-width-accent: 3px; /* left/top emphasis on alerts */
+  /* Shadows — soft, cool-tinted, low spread. No heavy drop shadows. */
+  --shadow-xs: 0 1px 2px rgba(13, 22, 38, 0.06);
+  --shadow-sm: 0 1px 3px rgba(13, 22, 38, 0.08), 0 1px 2px rgba(13, 22, 38, 0.04);
+  --shadow-md: 0 4px 12px rgba(13, 22, 38, 0.08), 0 1px 3px rgba(13, 22, 38, 0.05);
+  --shadow-lg: 0 12px 28px rgba(13, 22, 38, 0.12), 0 4px 8px rgba(13, 22, 38, 0.06);
+  --shadow-xl: 0 24px 56px rgba(6, 50, 95, 0.18);
+  --shadow-focus: var(--focus-ring);
+  /* Layout */
+  --container-max: 1200px;
+  --container-wide: 1400px;
+  --sidebar-width: 264px;
+  --topbar-height: 64px;
+  --content-gutter: var(--space-6);
+  /* Motion */
+  --ease-standard: cubic-bezier(0.2, 0, 0.2, 1); /* @kind other */
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1); /* @kind other */
+  --ease-in: cubic-bezier(0.4, 0, 1, 1); /* @kind other */
+  --duration-fast: 120ms; /* @kind other */
+  --duration-base: 200ms; /* @kind other */
+  --duration-slow: 320ms; /* @kind other */
+}
+:root{--r-card:4px;--r-sm:3px;--canvas-grid:none;--pulse-d:none;--radius-pill:4px;--radius-md:4px;--radius-lg:6px;--shadow-xs:none;--shadow-sm:none;--blue-900:#4F0A20;--blue-800:#6B0F2B;--blue-700:#7A1232;--blue-600:#8A1538;--blue-500:#A02148;--blue-200:#EBD0D8;--blue-100:#EBD0D8;--blue-50:#F6E8EC;--navy-action:#8A1538;--navy-action-dark:#6B0F2B;--action-gradient:#8A1538;--brand:#8A1538;--brand-strong:#6B0F2B;--brand-tint:#F6E8EC;--text-link:#8A1538;--border-focus:#8A1538;
+--neutral-950:#1F1A1C;--neutral-800:#3A3235;--neutral-700:#4A4245;--neutral-600:#5C5457;--neutral-500:#8C8487;--neutral-300:#D2CBC9;--neutral-200:#E4DFDD;--neutral-100:#F0ECEA;--neutral-50:#F7F5F3;--text-strong:#1F1A1C;--text-body:#2E2729;--text-muted:#5C5457;--text-subtle:#766E71;--surface-page:#F7F5F3;--surface-card:#FFFFFF;--surface-sunken:#F3F0EE;--surface-hover:#F0ECEA;--border-subtle:#E4DFDD;--border-default:#D2CBC9;--border-strong:#A8A0A3;
+--success:#1E7B4F;--success-fg:#17633F;--success-bg:#E8F3ED;--warning:#B7791F;--warning-fg:#8A5A12;--warning-bg:#FBF3E3;--danger:#C0352B;--danger-fg:#A12B23;--danger-bg:#FBECEA;--info:#2B6CB0;--info-bg:#EAF1F9;--amber-600:#B7791F;--amber-700:#8A5A12;--amber-50:#FBF3E3;
+--focus-ring:0 0 0 3px rgba(138,21,56,.3);--font-sans:"IBM Plex Sans",system-ui,sans-serif;--font-mono:"IBM Plex Mono",ui-monospace,monospace;--weight-semibold:600;--sand:#C8B49A;--sand-ink:#6E5A38;--sand-tint:#F4EEE6;--teal:#0F766E;--teal-tint:#E3F1EF}
+[data-look="default"]{--r-card:8px;--r-sm:6px;--canvas-grid:radial-gradient(#E4DFDD 1px,transparent 1px);--pulse-d:block;--radius-pill:999px;--radius-md:8px;--radius-lg:12px;--shadow-xs:0 1px 2px rgba(31,26,28,.06);--shadow-sm:0 1px 3px rgba(31,26,28,.08),0 1px 2px rgba(31,26,28,.04);--action-gradient:linear-gradient(180deg,#951A3F 0%,#8A1538 60%,#7A1232 100%)}
+html,body{margin:0;background:var(--surface-page)}*{box-sizing:border-box}button{font-family:inherit}a{color:var(--text-link);text-decoration:none}a:hover{color:var(--brand-strong);text-decoration:underline}
+@keyframes kpulse{0%{transform:scale(1);opacity:.7}100%{transform:scale(1.6);opacity:0}}

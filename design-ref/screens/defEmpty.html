@@ -1,0 +1,8 @@
+<sc-if value="{{ defEmpty }}">
+  <div style="background:var(--surface-card);border:1px solid var(--border-subtle);border-radius:var(--r-card);padding:56px 24px;display:flex;flex-direction:column;align-items:center;text-align:center;gap:10px">
+    <span style="width:44px;height:44px;border-radius:var(--r-card);background:var(--surface-sunken);display:grid;place-items:center;color:var(--text-muted)">{{ ic.building }}</span>
+    <div style="font-size:17px;font-weight:600;color:var(--text-strong)">No {{ defLabel }} in the Default project</div>
+    <div style="max-width:460px;color:var(--text-muted);font-size:13.5px">Default is the system project. It holds platform defaults and service identities, and doesn't run agents or store data. Switch to a tenant to see its {{ defLabel }}.</div>
+    <div style="display:flex;gap:8px;margin-top:6px"><x-import component-from-global-scope="SingleWindowDesignSystem_3a0998.Button" size="sm" sc-camel-on-click="{{ toSceai }}" hint-size="150px,34px">Switch to SCEAI</x-import><x-import component-from-global-scope="SingleWindowDesignSystem_3a0998.Button" size="sm" variant="outline" sc-camel-on-click="{{ goHome }}" hint-size="150px,34px">Default overview</x-import></div>
+  </div>
+</sc-if>

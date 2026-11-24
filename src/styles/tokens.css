@@ -1,0 +1,55 @@
+/* KAP Console design tokens — Single Window design system re-themed to
+   Qatar maroon ("refined" look). Values copied from design-ref/tokens.css
+   and the handoff README §6. Light theme only. */
+:root {
+  --r-card: 4px;
+  --r-sm: 3px;
+
+  --brand: #8A1538;
+  --brand-strong: #6B0F2B;
+  --brand-tint: #F6E8EC;
+  --brand-tint-2: #EBD0D8;
+
+  --surface-page: #F7F5F3;
+  --surface-card: #FFFFFF;
+  --surface-sunken: #F3F0EE;
+  --surface-hover: #F0ECEA;
+
+  --text-strong: #1F1A1C;
+  --text-body: #2E2729;
+  --text-muted: #5C5457;
+  --text-subtle: #766E71;
+
+  --border-subtle: #E4DFDD;
+  --border-default: #D2CBC9;
+  --border-strong: #A8A0A3;
+
+  --neutral-100: #F0ECEA;
+  --neutral-500: #8C8487;
+  --neutral-700: #4A4245;
+
+  --sand: #C8B49A;
+  --sand-ink: #6E5A38;
+  --sand-tint: #F4EEE6;
+  --teal: #0F766E;
+  --teal-tint: #E3F1EF;
+
+  --success: #1E7B4F;
+  --success-fg: #17633F;
+  --success-bg: #E8F3ED;
+  --success-border: #C9E4D5;
+  --warning: #B7791F;
+  --warning-fg: #8A5A12;
+  --warning-bg: #FBF3E3;
+  --warning-border: #F1DDB4;
+  --danger: #C0352B;
+  --danger-fg: #A12B23;
+  --danger-bg: #FBECEA;
+  --danger-border: #F2CBC7;
+  --info: #2B6CB0;
+  --info-bg: #EAF1F9;
+
+  --focus-ring: 0 0 0 3px rgba(138, 21, 56, 0.3);
+  --font-sans: 'IBM Plex Sans', system-ui, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, monospace;
+}

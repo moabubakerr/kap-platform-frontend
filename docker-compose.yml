@@ -1,0 +1,21 @@
+services:
+  kap-console:
+    build: .
+    image: kap-console:latest
+    container_name: kap-console
+    restart: unless-stopped
+    ports:
+      - "17100:8080"
+    environment:
+      KAP_UPSTREAM: ${KAP_UPSTREAM:-http://host.docker.internal:8013}
+      ASKAI_UPSTREAM: ${ASKAI_UPSTREAM:-http://host.docker.internal:18000}
+      PLATFORM_UPSTREAM: ${PLATFORM_UPSTREAM:-http://platform-api:8080}
+      PLATFORM_API_KEY: ${PLATFORM_API_KEY:?set PLATFORM_API_KEY in .env}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - kap_shared_network
+
+networks:
+  kap_shared_network:
+    external: true

@@ -1,0 +1,66 @@
+# KAP Console: static files plus same-origin proxies. Rendered at container
+# start; only ${KAP_UPSTREAM}, ${ASKAI_UPSTREAM}, ${PLATFORM_UPSTREAM} and ${PLATFORM_API_KEY} are substituted.
+
+server {
+    listen 8080;
+    server_name _;
+    root /usr/share/nginx/html;
+    index index.html;
+
+    charset utf-8;
+    charset_types text/css text/plain application/javascript application/json image/svg+xml;
+    gzip on;
+    gzip_proxied off;
+    gzip_types text/css text/plain application/javascript application/json image/svg+xml;
+    gzip_min_length 1024;
+
+    # /api/platform/traces -> ${PLATFORM_UPSTREAM}/api/traces ; the API key is added here,
+    # server-side, and never reaches the browser.
+    location /api/platform/ {
+        proxy_pass ${PLATFORM_UPSTREAM}/api/;
+        proxy_http_version 1.1;
+        proxy_set_header Authorization "Bearer ${PLATFORM_API_KEY}";
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header Connection "";
+        proxy_read_timeout 60s;
+    }
+
+    # /api/kap/agents -> ${KAP_UPSTREAM}/api/agents
+    location /api/kap/ {
+        proxy_pass ${KAP_UPSTREAM}/api/;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Connection "";
+        proxy_read_timeout 60s;
+    }
+
+    # /api/askai/admin/messages -> ${ASKAI_UPSTREAM}/admin/messages
+    location /api/askai/ {
+        proxy_pass ${ASKAI_UPSTREAM}/;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Connection "";
+        proxy_buffering off;
+        proxy_read_timeout 120s;
+    }
+
+    location /assets/ {
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+        try_files $uri =404;
+    }
+
+    location = /index.html {
+        add_header Cache-Control "no-store";
+    }
+
+    # SPA history fallback: deep links such as /p/sceai/agents/x/versions.
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+}

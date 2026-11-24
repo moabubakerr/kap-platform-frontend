@@ -1,0 +1,53 @@
+<sc-if value="{{ s.wizard }}">
+<div style="padding:12px 32px 48px;display:flex;flex-direction:column;gap:16px;max-width:1240px">
+  <div><h1 style="margin:0;font-size:24px;font-weight:600;color:var(--text-strong)">Create agent</h1><p style="margin:4px 0 0;color:var(--text-muted)">Configure a new planner_and_executor agent for SCEAI. Nothing is created until you confirm on the last step.</p></div>
+  <div style="display:grid;grid-template-columns:200px minmax(0,1fr);gap:20px;align-items:start">
+    <div style="display:flex;flex-direction:column;gap:2px;position:sticky;top:12px">
+      <sc-for list="{{ wSteps }}" as="w">
+        <div style="display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:var(--r-sm);background:{{ w.bg }}">
+          <span style="width:24px;height:24px;border-radius:50%;display:grid;place-items:center;font-size:12px;font-weight:600;background:{{ w.cbg }};color:{{ w.cfg }};border:1.5px solid {{ w.cb }}">{{ w.mark }}</span>
+          <span style="font-size:13.5px;color:{{ w.fg }};font-weight:{{ w.fw }}">{{ w.n }}</span>
+        </div>
+      </sc-for>
+    </div>
+    <div style="background:var(--surface-card);border:1px solid var(--border-subtle);border-radius:var(--r-card)">
+      <div style="padding:20px 24px;border-bottom:1px solid var(--border-subtle)"><div style="font-size:12px;color:var(--text-muted)">Step 4 of 7</div><div style="font-size:18px;font-weight:600;color:var(--text-strong);margin-top:2px">Tools</div><div style="color:var(--text-muted);margin-top:4px;font-size:13.5px">Choose what the agent may call while planning. Each call counts against the tool-call limit of 15.</div></div>
+      <div style="padding:20px 24px;display:flex;flex-direction:column;gap:22px">
+        <div>
+          <div style="display:flex;flex-wrap:wrap;gap:6px 12px;align-items:center;justify-content:space-between;margin-bottom:10px"><div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-weight:600;color:var(--text-strong);white-space:nowrap"><span style="width:10px;height:10px;border-radius:2px;background:#8A1538"></span>Local indicator tools <span style="font-weight:400;color:var(--text-muted);font-size:13px">11 of 11 selected</span></div><a href="#" style="font-size:13px">Clear all</a></div>
+          <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,230px),1fr));gap:8px">
+            <sc-for list="{{ wTools }}" as="t" hint-placeholder-count="11">
+              <label style="display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border:1px solid var(--brand-tint);background:#FCF7F8;border-radius:var(--r-sm)">
+                <span style="width:16px;height:16px;border-radius:3px;background:var(--brand);color:#fff;display:grid;place-items:center;flex:none;margin-top:1px">{{ ic.checkSm }}</span>
+                <span><span style="display:block;font-family:var(--font-mono);font-size:12.5px;color:var(--text-strong)">{{ t.n }}</span><span style="font-size:12px;color:var(--text-muted)">{{ t.d }}</span></span>
+              </label>
+            </sc-for>
+          </div>
+        </div>
+        <div>
+          <div style="display:flex;align-items:center;gap:8px;font-weight:600;color:var(--text-strong);margin-bottom:10px"><span style="width:10px;height:10px;border-radius:2px;background:#C8B49A"></span>Document search</div>
+          <label style="display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border:1px solid var(--brand-tint);background:#FCF7F8;border-radius:var(--r-sm);max-width:520px"><span style="width:16px;height:16px;border-radius:3px;background:var(--brand);color:#fff;display:grid;place-items:center;flex:none;margin-top:1px">{{ ic.checkSm }}</span><span><span style="display:block;font-family:var(--font-mono);font-size:12.5px;color:var(--text-strong)">hybrid_search</span><span style="font-size:12px;color:var(--text-muted)">Semantic + keyword search over Word documents in attached collections (embed_default, 1024-d)</span></span></label>
+        </div>
+        <div>
+          <div style="display:flex;align-items:center;gap:8px;font-weight:600;color:var(--text-strong);margin-bottom:10px"><span style="width:10px;height:10px;border-radius:2px;background:#0F766E"></span>External MCP tools · <span style="font-family:var(--font-mono);font-weight:500">oxford_economics</span></div>
+          <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,230px),1fr));gap:8px">
+            <label style="display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border:1px solid #0F766E;background:var(--teal-tint);border-radius:var(--r-sm)"><span style="width:16px;height:16px;border-radius:3px;background:#0F766E;color:#fff;display:grid;place-items:center;flex:none;margin-top:1px">{{ ic.checkSm }}</span><span><span style="display:block;font-family:var(--font-mono);font-size:12.5px;color:var(--text-strong)">EconomicData</span><span style="font-size:12px;color:var(--text-muted)">Public macro data series</span></span></label>
+            <label style="display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border:1px solid var(--border-default);border-radius:var(--r-sm)"><span style="width:16px;height:16px;border-radius:3px;border:1.5px solid var(--border-strong);flex:none;margin-top:1px"></span><span><span style="display:block;font-family:var(--font-mono);font-size:12.5px;color:var(--text-strong)">EconomicAnalysis</span><span style="font-size:12px;color:var(--text-muted)">Forecasts and narrative analysis</span></span></label>
+          </div>
+          <div style="display:flex;gap:10px;margin-top:10px;padding:12px 14px;border-radius:var(--r-sm);background:var(--warning-bg);border:1px solid var(--warning-border);color:var(--warning-fg);font-size:13px">
+            <span style="display:flex;margin-top:1px">{{ ic.warn }}</span>
+            <div><b>Calls leave the SCEAI project boundary.</b> Only public-domain questions are sent to Oxford Economics. The data-leak guard blocks local indicator codes, values and tenant identifiers, and every outbound question is recorded in the trace.</div>
+          </div>
+        </div>
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:8px;justify-content:space-between;align-items:center;padding:14px 24px;border-top:1px solid var(--border-subtle);background:var(--surface-sunken);border-radius:0 0 8px 8px">
+        <x-import component-from-global-scope="SingleWindowDesignSystem_3a0998.Button" variant="ghost" size="sm" hint-size="80px,34px">Cancel</x-import>
+        <div style="display:flex;gap:8px">
+          <x-import component-from-global-scope="SingleWindowDesignSystem_3a0998.Button" variant="outline" size="sm" icon-left="{{ ic.chevL }}" hint-size="90px,34px">Back</x-import>
+          <x-import component-from-global-scope="SingleWindowDesignSystem_3a0998.Button" size="sm" icon-right="{{ ic.chevR }}" hint-size="180px,34px">Next: System instructions</x-import>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</sc-if>

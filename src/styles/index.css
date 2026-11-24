@@ -1,0 +1,82 @@
+@import './tokens.css';
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  body {
+    margin: 0;
+    background: var(--surface-page);
+    color: var(--text-body);
+    font-family: var(--font-sans);
+    font-size: 14px;
+    line-height: 1.5;
+    font-variant-numeric: tabular-nums;
+    -webkit-font-smoothing: antialiased;
+  }
+  a {
+    color: var(--brand);
+    text-decoration: none;
+  }
+  a:hover {
+    color: var(--brand-strong);
+    text-decoration: underline;
+  }
+  :focus-visible {
+    outline: none;
+    box-shadow: var(--focus-ring);
+  }
+  h1,
+  h2,
+  h3 {
+    margin: 0;
+    color: var(--text-strong);
+  }
+}
+
+@layer components {
+  .card {
+    @apply rounded-card border border-line-subtle bg-surface;
+  }
+  .eyebrow {
+    @apply text-2xs font-semibold uppercase tracking-[.08em] text-ink-subtle;
+  }
+  .page {
+    @apply flex max-w-[1440px] flex-col gap-6 px-8 pb-12 pt-4;
+  }
+  .h1 {
+    @apply text-2xl font-semibold tracking-[-0.01em] text-ink-strong;
+  }
+  .h2 {
+    @apply text-[15px] font-semibold text-ink-strong;
+  }
+  .mono {
+    @apply font-mono;
+  }
+  .chip {
+    @apply inline-flex h-[22px] items-center gap-1 whitespace-nowrap rounded-sm bg-surface-sunken px-2 text-[11.5px] text-ink-body;
+  }
+  .th {
+    @apply whitespace-nowrap border-b border-line-subtle bg-surface-sunken px-3 py-2 text-left text-[11.5px] font-semibold uppercase tracking-[.04em] text-ink-subtle;
+  }
+  .td {
+    @apply border-b border-line-subtle px-3 py-[9px] align-middle text-[13px];
+  }
+  .ellipsis {
+    @apply min-w-0 overflow-hidden text-ellipsis whitespace-nowrap;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

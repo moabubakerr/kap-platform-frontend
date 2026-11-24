@@ -1,0 +1,46 @@
+<sc-if value="{{ s.jobs }}">
+<div style="padding:12px 32px 48px;display:flex;flex-direction:column;gap:16px;max-width:1440px">
+  <div style="display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap">
+    <div><h1 style="margin:0;font-size:24px;font-weight:600;color:var(--text-strong)">Agent jobs <span style="font-size:15px;font-weight:500;color:var(--text-muted)">50</span></h1><p style="margin:4px 0 0;color:var(--text-muted)">Jobs submitted to SCEAI agents on the kap.agent queue. Select a row to open its trace.</p></div>
+    <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;font-size:13px"><span style="color:var(--text-muted);white-space:nowrap">Saved views</span>
+      <span style="white-space:nowrap;padding:5px 10px;border-radius:var(--r-sm);background:var(--brand-tint);color:var(--brand-strong);font-weight:600">All jobs</span><span style="white-space:nowrap;padding:5px 10px;border-radius:var(--r-sm);border:1px solid var(--border-default)">My failed jobs</span><span style="white-space:nowrap;padding:5px 10px;border-radius:var(--r-sm);border:1px solid var(--border-default)">Oxford jobs today</span>
+    </div>
+  </div>
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));background:var(--surface-card);border:1px solid var(--border-subtle);border-radius:var(--r-card)">
+    <sc-for list="{{ summary }}" as="x"><div style="padding:12px 16px;border-left:1px solid var(--border-subtle)"><div style="font-size:12.5px;color:var(--text-muted);display:flex;align-items:center;gap:6px;white-space:nowrap"><span style="width:8px;height:8px;border-radius:50%;background:{{ x.c }}"></span>{{ x.k }}</div><div style="font-size:22px;font-weight:600;color:var(--text-strong);margin-top:2px">{{ x.v }}</div></div></sc-for>
+  </div>
+  <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+    <div style="display:flex;align-items:center;gap:8px;height:34px;width:280px;max-width:100%;white-space:nowrap;overflow:hidden;padding:0 10px;border:1px solid var(--border-default);border-radius:var(--r-card);background:var(--surface-card);color:var(--text-subtle);font-size:13px">{{ ic.search }}Search question, job ID, user</div>
+    <span style="display:flex;align-items:center;gap:6px;height:30px;padding:0 12px;white-space:nowrap;flex:none;border:1px solid var(--brand);border-radius:var(--r-sm);background:var(--brand-tint);color:var(--brand-strong);font-size:13px;font-weight:500">Status: any{{ ic.chev }}</span>
+    <span style="display:flex;align-items:center;gap:6px;height:30px;padding:0 12px;white-space:nowrap;flex:none;border:1px solid var(--border-default);border-radius:var(--r-sm);background:var(--surface-card);font-size:13px;white-space:nowrap">Agent: any{{ ic.chev }}</span>
+    <span style="display:flex;align-items:center;gap:6px;height:30px;padding:0 12px;white-space:nowrap;flex:none;border:1px solid var(--border-default);border-radius:var(--r-sm);background:var(--surface-card);font-size:13px;white-space:nowrap">User: any{{ ic.chev }}</span>
+    <div style="flex:none;display:flex;border:1px solid var(--border-default);border-radius:var(--r-sm);overflow:hidden;font-size:13px;background:var(--surface-card)"><span style="white-space:nowrap;padding:5px 12px">Today</span><span style="white-space:nowrap;padding:5px 12px;border-left:1px solid var(--border-subtle)">24 h</span><span style="white-space:nowrap;padding:5px 12px;border-left:1px solid var(--border-subtle);background:var(--brand-tint);color:var(--brand-strong);font-weight:600">7 d</span><span style="white-space:nowrap;padding:5px 12px;border-left:1px solid var(--border-subtle)">Custom</span></div>
+    <div style="flex:1"></div>
+    <span style="display:flex;align-items:center;gap:6px;height:30px;padding:0 12px;white-space:nowrap;flex:none;border:1px solid var(--border-default);border-radius:var(--r-card);background:var(--surface-card);font-size:13px">{{ ic.cols }}Columns</span>
+  </div>
+  <div style="display:flex;flex-wrap:wrap;white-space:nowrap;align-items:center;gap:12px;padding:8px 14px;border-radius:var(--r-card);background:var(--brand-tint);font-size:13px;color:var(--brand-strong)"><b>2 selected</b><span style="text-decoration:underline">Re-run</span><span style="text-decoration:underline">Cancel</span><span style="text-decoration:underline">Export</span><span style="margin-left:auto;color:var(--text-muted)">Clear selection</span></div>
+  <div style="background:var(--surface-card);border:1px solid var(--border-subtle);border-radius:var(--r-card);overflow:auto">
+    <sc-raw-table style="width:100%;border-collapse:collapse;font-size:13px;min-width:1000px">
+      <sc-raw-thead><sc-raw-tr style="text-align:left;color:var(--text-muted);font-size:12px;background:var(--surface-sunken)">
+        <sc-raw-th style="padding:9px 14px;width:36px"><span style="display:block;width:16px;height:16px;border:1.5px solid var(--border-strong);border-radius:var(--r-sm)"></span></sc-raw-th><sc-raw-th style="padding:9px 8px;font-weight:600">Status</sc-raw-th><sc-raw-th style="padding:9px 8px;font-weight:600">Job ID</sc-raw-th><sc-raw-th style="padding:9px 8px;font-weight:600">Agent</sc-raw-th><sc-raw-th style="padding:9px 8px;font-weight:600">User</sc-raw-th><sc-raw-th style="padding:9px 8px;font-weight:600">Question</sc-raw-th><sc-raw-th style="padding:9px 8px;font-weight:600;text-align:right">Duration</sc-raw-th><sc-raw-th style="padding:9px 8px;font-weight:600;text-align:right">Retries</sc-raw-th><sc-raw-th style="padding:9px 14px 9px 8px;font-weight:600;color:var(--text-strong)">Created ↓</sc-raw-th>
+      </sc-raw-tr></sc-raw-thead>
+      <sc-raw-tbody>
+        <sc-for list="{{ jobs }}" as="j" hint-placeholder-count="12">
+          <sc-raw-tr sc-camel-on-click="{{ goTrace }}" style="border-top:1px solid var(--border-subtle);background:{{ j.bg }};cursor:pointer" style-hover="background:var(--surface-hover)">
+            <sc-raw-td style="padding:8px 14px"><span style="display:grid;place-items:center;width:16px;height:16px;border:1.5px solid {{ j.cb }};background:{{ j.cbg }};border-radius:var(--r-sm);color:#fff">{{ j.check }}</span></sc-raw-td>
+            <sc-raw-td style="padding:8px"><x-import component-from-global-scope="SingleWindowDesignSystem_3a0998.StatusPill" status="{{ j.p }}" label="{{ j.pl }}" hint-size="96px,26px"></x-import></sc-raw-td>
+            <sc-raw-td style="padding:8px;font-family:var(--font-mono);font-size:12.5px;white-space:nowrap">{{ j.id }}… <span style="color:var(--text-subtle);vertical-align:middle">{{ ic.copySm }}</span></sc-raw-td>
+            <sc-raw-td style="padding:8px"><a href="#" style="font-family:var(--font-mono);font-size:12.5px">{{ j.agent }}</a></sc-raw-td>
+            <sc-raw-td style="padding:8px"><a href="#" style="font-family:var(--font-mono);font-size:12.5px">{{ j.user }}</a></sc-raw-td>
+            <sc-raw-td style="padding:8px;max-width:360px"><div style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--text-strong)">{{ j.q }}</div><sc-if value="{{ j.reason }}"><div style="font-size:12px;color:var(--danger-fg)">{{ j.reason }}</div></sc-if></sc-raw-td>
+            <sc-raw-td style="padding:8px;text-align:right;font-family:var(--font-mono);font-size:12.5px">{{ j.dur }}</sc-raw-td>
+            <sc-raw-td style="padding:8px;text-align:right;font-family:var(--font-mono);font-size:12.5px">{{ j.r }}</sc-raw-td>
+            <sc-raw-td style="padding:8px 14px 8px 8px;color:var(--text-muted);white-space:nowrap" title="{{ j.abs }}">{{ j.when }}</sc-raw-td>
+          </sc-raw-tr>
+        </sc-for>
+      </sc-raw-tbody>
+    </sc-raw-table>
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 14px;border-top:1px solid var(--border-subtle);font-size:13px;color:var(--text-muted)"><span>1–12 of 50</span><div style="display:flex;gap:6px;align-items:center"><span style="padding:4px 10px;border:1px solid var(--border-subtle);border-radius:var(--r-sm);opacity:.5">Previous</span><span style="padding:4px 10px;border:1px solid var(--border-default);border-radius:var(--r-sm);color:var(--text-strong)">Next</span></div></div>
+  </div>
+</div>
+</sc-if>

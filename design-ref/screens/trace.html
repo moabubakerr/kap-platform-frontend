@@ -1,0 +1,88 @@
+<sc-if value="{{ s.trace }}">
+<div style="padding:12px 32px 48px;display:flex;flex-direction:column;gap:16px;max-width:1440px">
+  <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap">
+    <div style="display:flex;flex-direction:column;gap:8px">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap"><h1 style="margin:0;font-size:22px;font-weight:600;color:var(--text-strong);white-space:nowrap">Trace <span style="font-family:var(--font-mono);font-weight:500">93c7a1f2</span></h1><x-import component-from-global-scope="SingleWindowDesignSystem_3a0998.StatusPill" status="approved" label="Succeeded" hint-size="96px,26px"></x-import><span style="display:flex;color:var(--text-muted)">{{ ic.copy }}</span></div>
+      <div style="display:flex;gap:6px 18px;flex-wrap:wrap;font-size:13px;color:var(--text-muted);white-space:nowrap">
+        <span>Agent <a href="#" style="font-family:var(--font-mono)">sceai_indicators_oxford</a></span><span>User <a href="#" style="font-family:var(--font-mono)">sceai_analyst</a></span><span>Duration <b style="color:var(--text-strong)">9.8 s</b></span><span title="19 Nov 2026, 10:42:07">Created 12 min ago</span><span>Updated 12 min ago</span><span>Retries 0</span><span>Queue <span style="font-family:var(--font-mono)">kap.agent</span></span>
+      </div>
+    </div>
+    <div style="display:flex;gap:8px">
+      <x-import component-from-global-scope="SingleWindowDesignSystem_3a0998.Button" variant="ghost" size="sm" icon-left="{{ ic.copy }}" hint-size="110px,34px">Copy link</x-import>
+      <x-import component-from-global-scope="SingleWindowDesignSystem_3a0998.Button" variant="outline" size="sm" icon-left="{{ ic.map }}" sc-camel-on-click="{{ goMap }}" hint-size="160px,34px">Open in agents map</x-import>
+      <x-import component-from-global-scope="SingleWindowDesignSystem_3a0998.Button" size="sm" icon-left="{{ ic.rerun }}" hint-size="110px,34px">Re-run job</x-import>
+    </div>
+  </div>
+
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,380px),1fr));gap:12px">
+    <div style="background:var(--surface-card);border:1px solid var(--border-subtle);border-radius:var(--r-card);padding:16px;display:flex;flex-direction:column;gap:12px">
+      <div><div style="font-size:12px;font-weight:600;color:var(--text-muted);margin-bottom:6px">user_prompt</div><div style="padding:10px 12px;background:var(--surface-sunken);border-radius:var(--r-sm);color:var(--text-strong)">What was the tourism sector contribution to GDP in Q4 2024, and how does it compare with the target? Add wider GDP context.</div></div>
+      <div><div style="font-size:12px;font-weight:600;color:var(--text-muted);margin-bottom:6px">Answer</div>
+        <div style="line-height:1.75;color:var(--text-strong);font-size:14.5px">In Q4 2024 the tourism sector contributed <span style="background:#F6E8EC;color:#6B0F2B;font-weight:600;padding:1px 5px;border-radius:var(--r-card)">8.8%<sup style="font-size:10px;margin-left:2px">L1</sup></span> of GDP against a target of <span style="background:#F6E8EC;color:#6B0F2B;font-weight:600;padding:1px 5px;border-radius:var(--r-card)">7.6%<sup style="font-size:10px;margin-left:2px">L1</sup></span>, putting it 1.2 percentage points above target. For wider context, Oxford Economics estimates Qatar's real GDP grew by <span style="background:var(--teal-tint);color:#0F766E;font-weight:600;padding:1px 5px;border-radius:var(--r-card)">1.56%<sup style="font-size:10px;margin-left:2px">X1</sup></span> in 2023.</div>
+      </div>
+    </div>
+    <div style="background:var(--surface-card);border:1px solid var(--border-subtle);border-radius:var(--r-card);padding:16px;display:flex;flex-direction:column;gap:14px">
+      <div style="font-weight:600;color:var(--text-strong)">Limits</div>
+      <sc-for list="{{ meters }}" as="m">
+        <div style="display:flex;flex-direction:column;gap:5px"><div style="display:flex;justify-content:space-between;gap:8px;font-size:13px;white-space:nowrap"><span style="color:var(--text-muted)">{{ m.k }}</span><span style="font-weight:600;color:var(--text-strong)">{{ m.v }}</span></div><div style="height:8px;background:var(--surface-sunken);border-radius:var(--r-card)"><div style="width:{{ m.p }}%;height:100%;background:var(--brand);border-radius:var(--r-card)"></div></div></div>
+      </sc-for>
+      <div style="display:flex;gap:8px;align-items:center;padding:10px 12px;border-radius:var(--r-sm);background:var(--success-bg);color:var(--success-fg);font-size:13px;font-weight:500">{{ ic.shield }}Data-leak guard passed · no local data sent to Oxford</div>
+    </div>
+  </div>
+
+  <div style="white-space:nowrap;overflow-x:auto"><x-import component-from-global-scope="SingleWindowDesignSystem_3a0998.Tabs" items="{{ traceTabs }}" value="{{ tTab }}" sc-camel-on-change="{{ setTTab }}" hint-size="100%,42px"></x-import></div>
+
+  <sc-if value="{{ tt.timeline }}"><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,480px),1fr));gap:12px;align-items:start">
+    <div style="background:var(--surface-card);border:1px solid var(--border-subtle);border-radius:var(--r-card);overflow:hidden">
+      <div style="display:grid;grid-template-columns:250px minmax(0,1fr) 70px;gap:12px;padding:8px 14px;font-size:11.5px;color:var(--text-subtle);background:var(--surface-sunken)"><span>Step</span><div style="display:flex;justify-content:space-between"><span>0</span><span>2.5 s</span><span>5 s</span><span>7.5 s</span><span>9.8 s</span></div><span style="text-align:right">Duration</span></div>
+      <sc-for list="{{ spans }}" as="b" hint-placeholder-count="9">
+        <div style="display:grid;grid-template-columns:250px minmax(0,1fr) 70px;gap:12px;align-items:center;padding:7px 14px;border-top:1px solid var(--border-subtle);background:{{ b.bg }};cursor:pointer">
+          <div style="display:flex;align-items:center;gap:8px;min-width:0;padding-left:{{ b.ind }}px"><span style="width:8px;height:8px;border-radius:2px;background:{{ b.c }};flex:none"></span><span style="font-family:{{ b.f }};font-size:12.5px;color:var(--text-strong);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ b.n }}</span><span style="font-size:11px;color:var(--text-subtle);white-space:nowrap">{{ b.k }}</span></div>
+          <div style="position:relative;height:16px"><div style="position:absolute;left:{{ b.l }}%;width:{{ b.w }}%;top:0;bottom:0;background:{{ b.c }};border-radius:var(--r-sm);min-width:3px"></div></div>
+          <span style="text-align:right;font-family:var(--font-mono);font-size:12px">{{ b.d }}</span>
+        </div>
+      </sc-for>
+    </div>
+    <div style="background:var(--surface-card);border:1px solid var(--border-subtle);border-radius:var(--r-card);padding:16px;display:flex;flex-direction:column;gap:12px">
+      <div style="display:flex;align-items:center;gap:8px"><span style="width:10px;height:10px;border-radius:2px;background:#0F766E"></span><span style="font-family:var(--font-mono);font-weight:600;color:var(--text-strong)">EconomicData</span><x-import component-from-global-scope="SingleWindowDesignSystem_3a0998.Badge" tone="info" hint-size="90px,22px">Oxford MCP</x-import><span style="margin-left:auto;font-family:var(--font-mono);font-size:12.5px">2.41 s</span></div>
+      <div style="font-size:12px;font-weight:600;color:var(--text-muted)">Input</div>
+      <pre style="margin:0;font-family:var(--font-mono);font-size:12px;line-height:1.6;background:var(--surface-sunken);border:1px solid var(--border-subtle);border-radius:var(--r-sm);padding:10px 12px;white-space:pre-wrap"><span style="color:#5C5457">{</span>
+  <span style="color:#8A1538">"question"</span>: <span style="color:#0F766E">"What was Qatar's real GDP growth in 2023?"</span>
+<span style="color:#5C5457">}</span></pre>
+      <div style="font-size:12px;font-weight:600;color:var(--text-muted)">Output</div>
+      <pre style="margin:0;font-family:var(--font-mono);font-size:12px;line-height:1.6;background:var(--surface-sunken);border:1px solid var(--border-subtle);border-radius:var(--r-sm);padding:10px 12px;white-space:pre-wrap"><span style="color:#5C5457">{</span>
+  <span style="color:#8A1538">"country"</span>: <span style="color:#0F766E">"Qatar"</span>,
+  <span style="color:#8A1538">"indicator"</span>: <span style="color:#0F766E">"Real GDP growth"</span>,
+  <span style="color:#8A1538">"year"</span>: <span style="color:#2B6CB0">2023</span>,
+  <span style="color:#8A1538">"value"</span>: <span style="color:#2B6CB0">1.56</span>,
+  <span style="color:#8A1538">"unit"</span>: <span style="color:#0F766E">"% y/y"</span>
+<span style="color:#5C5457">}</span></pre>
+    </div>
+  </div>
+
+</sc-if>
+<sc-if value="{{ tt.prov }}">
+  <div style="font-weight:600;color:var(--text-strong);font-size:16px;margin-top:4px">Answer provenance</div>
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px">
+    <div style="background:var(--surface-card);border:1px solid var(--border-subtle);border-top:3px solid #8A1538;border-radius:var(--r-card);padding:14px 16px;font-size:13px">
+      <div style="font-weight:600;color:#8A1538;margin-bottom:10px">Local data · L1</div>
+      <div style="display:grid;grid-template-columns:100px 1fr;gap:6px 10px"><span style="color:var(--text-muted)">Indicator</span><span>Sector Contribution to GDP (Tourism)</span><span style="color:var(--text-muted)">Period</span><span>Q4 2024</span><span style="color:var(--text-muted)">Actual / target</span><span><b>8.8%</b> vs 7.6%</span><span style="color:var(--text-muted)">Unit</span><span>% of GDP</span><span style="color:var(--text-muted)">Source org</span><span>Qatar Tourism</span><span style="color:var(--text-muted)">File · row</span><span style="font-family:var(--font-mono);font-size:12px">sceai_indicators_quarterly.csv · 2214</span></div>
+    </div>
+    <div style="background:var(--surface-card);border:1px solid var(--border-subtle);border-top:3px solid #C8B49A;border-radius:var(--r-card);padding:14px 16px;font-size:13px">
+      <div style="font-weight:600;color:var(--sand-ink);margin-bottom:10px">Document context</div>
+      <div style="color:var(--text-muted)">No document passages were used in this answer.</div>
+    </div>
+    <div style="background:var(--surface-card);border:1px solid var(--border-subtle);border-top:3px solid #0F766E;border-radius:var(--r-card);padding:14px 16px;font-size:13px">
+      <div style="font-weight:600;color:#0F766E;margin-bottom:10px">External · Oxford Economics · X1</div>
+      <div style="display:grid;grid-template-columns:100px 1fr;gap:6px 10px"><span style="color:var(--text-muted)">Tool</span><span style="font-family:var(--font-mono);font-size:12px">EconomicData</span><span style="color:var(--text-muted)">Question sent</span><span>"What was Qatar's real GDP growth in 2023?"</span><span style="color:var(--text-muted)">Value</span><span><b>1.56%</b></span></div>
+      <div style="display:flex;flex-direction:column;gap:4px;margin-top:12px;padding-top:10px;border-top:1px solid var(--border-subtle);font-size:12.5px;color:var(--success-fg)">
+        <span style="display:flex;gap:6px;align-items:center">{{ ic.check }}No local indicator codes or values sent</span>
+        <span style="display:flex;gap:6px;align-items:center">{{ ic.check }}No tenant, user or job identifiers sent</span>
+      </div>
+    </div>
+  </div>
+</sc-if>
+<sc-if value="{{ tt.raw }}"><div style="background:var(--surface-card);border:1px solid var(--border-subtle);border-radius:var(--r-card)"><div style="display:flex;justify-content:space-between;align-items:center;gap:12px;padding:14px 16px;border-bottom:1px solid var(--border-subtle)"><div style="font-weight:600;color:var(--text-strong)">Raw job record</div><span style="display:flex;gap:6px;align-items:center;font-size:13px;color:var(--brand)">{{ ic.copy }}Copy JSON</span></div><pre style="margin:0;padding:14px 16px;font-family:var(--font-mono);font-size:12px;line-height:1.65;overflow:auto;max-height:560px"><sc-for list="{{ rawLines }}" as="ln"><div style="white-space:pre"><span style="display:inline-block;width:28px;color:var(--text-subtle)">{{ ln.n }}</span><span style="color:{{ ln.c }}">{{ ln.t }}</span></div></sc-for></pre></div></sc-if>
+<sc-if value="{{ tt.logs }}"><div style="background:var(--surface-card);border:1px solid var(--border-subtle);border-radius:var(--r-card)"><div style="display:flex;justify-content:space-between;align-items:center;gap:12px;padding:14px 16px;border-bottom:1px solid var(--border-subtle)"><div style="font-weight:600;color:var(--text-strong)">Logs · 18 lines</div><div style="display:flex;gap:6px;font-size:12.5px"><span style="padding:3px 10px;border-radius:var(--r-sm);background:var(--brand-tint);color:var(--brand-strong);font-weight:600">All</span><span style="padding:3px 10px;border-radius:var(--r-sm);border:1px solid var(--border-default)">Warnings</span><span style="padding:3px 10px;border-radius:var(--r-sm);border:1px solid var(--border-default)">Errors</span></div></div><div style="padding:8px 0;font-family:var(--font-mono);font-size:12px;line-height:1.8"><sc-for list="{{ logs }}" as="l"><div style="display:grid;grid-template-columns:110px 56px 1fr;gap:10px;padding:0 16px" style-hover="background:var(--surface-hover)"><span style="color:var(--text-subtle)">{{ l.t }}</span><span style="color:{{ l.c }};font-weight:600">{{ l.lv }}</span><span style="color:var(--text-body);white-space:pre-wrap">{{ l.m }}</span></div></sc-for></div></div></sc-if>
+</div>
+</sc-if>
