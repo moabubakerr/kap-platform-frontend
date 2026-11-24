@@ -5,7 +5,7 @@
  * becomes the real signed-in user.
  */
 import * as React from 'react';
-import { ACCOUNTS, can as canFor, canPlatform, platformAdmin, roleNamesIn, type ResType, type TenantKey } from './iam';
+import { accounts, can as canFor, canPlatform, iamStore, platformAdmin, roleNamesIn, type ResType, type TenantKey } from './iam';
 
 const STORAGE_KEY = 'kap.viewAs';
 const DEFAULT_ACCOUNT = 'kap.ops';
@@ -16,7 +16,7 @@ const AccessCtx = React.createContext<Ctx>({ uid: DEFAULT_ACCOUNT, setUid: () =>
 function initial(): string {
   try {
     const v = localStorage.getItem(STORAGE_KEY);
-    if (v && ACCOUNTS.some((a) => a.id === v)) return v;
+    if (v && accounts().some((a) => a.id === v)) return v;
   } catch {
     /* storage unavailable */
   }
@@ -44,9 +44,11 @@ export function useViewAs() {
 /** Permission helpers for the current account in tenant `t`. */
 export function useAccess(t: TenantKey | null) {
   const { uid } = useViewAs();
+  const iam = iamStore.use(); // re-evaluate when users, groups or grants change
   return React.useMemo(() => {
     const pa = platformAdmin(uid);
-    const account = ACCOUNTS.find((a) => a.id === uid) ?? ACCOUNTS[0];
+    const all = accounts();
+    const account = all.find((a) => a.id === uid) ?? all[0];
     return {
       uid,
       name: account.name,
@@ -57,5 +59,5 @@ export function useAccess(t: TenantKey | null) {
       canP: (perm: string) => canPlatform(uid, perm),
       rolesIn: (tt: TenantKey) => roleNamesIn(uid, tt),
     };
-  }, [uid, t]);
+  }, [uid, t, iam]);
 }

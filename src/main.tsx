@@ -14,6 +14,7 @@ import './styles/index.css';
 import { router } from './app/routes';
 import { TooltipProvider } from './components/ui/menu';
 import { AccessProvider } from './v35/access';
+import { DialogsProvider } from './engine/dialogs';
 
 const queryClient = new QueryClient({ defaultOptions: { queries: { refetchOnWindowFocus: false, retry: 1 } } });
 
@@ -22,7 +23,9 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
         <AccessProvider>
-          <RouterProvider router={router} />
+          <DialogsProvider>
+            <RouterProvider router={router} />
+          </DialogsProvider>
         </AccessProvider>
         <Toaster position="bottom-right" toastOptions={{ style: { fontFamily: 'var(--font-sans)', borderRadius: 4 } }} />
       </TooltipProvider>

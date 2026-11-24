@@ -10,7 +10,7 @@ import { EmptyState } from '@/components/common/primitives';
 import { Button } from '@/components/ui/button';
 import { Page } from '@/components/common/layout';
 import { useViewAs } from '@/v35/access';
-import { platformAdmin } from '@/v35/iam';
+import { iamStore, platformAdmin } from '@/v35/iam';
 import { allowedPlatform, allowedTenant, groupOf, landingFor, platformScreenByPath, PLATFORM_NAV, TENANT_NAV, tenantScreenByPath, type NavGroup } from '@/v35/screens';
 
 type Scope = { kind: 'platform' } | { kind: 'project'; project: Project };
@@ -54,6 +54,7 @@ function Shell({ scope }: { scope: Scope }) {
     });
   const { pathname } = useLocation();
   const { uid } = useViewAs();
+  iamStore.use(); // navigation follows IAM edits
   const mainRef = React.useRef<HTMLElement>(null);
   const openPalette = React.useCallback(() => setPalette(true), []);
 
@@ -116,6 +117,7 @@ function Shell({ scope }: { scope: Scope }) {
 function Guard({ scope, base, children }: { scope: Scope; base: string; children: React.ReactNode }) {
   const { pathname } = useLocation();
   const { uid } = useViewAs();
+  iamStore.use();
   const nav = useNavigate();
   const seg = pathname.slice(base.length).replace(/^\//, '').split('/')[0] ?? '';
   if (scope.kind === 'platform') {

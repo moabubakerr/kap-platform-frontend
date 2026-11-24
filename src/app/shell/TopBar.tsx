@@ -5,7 +5,7 @@ import {
 } from 'lucide-react';
 import { Menu, MenuContent, MenuItem, MenuLabel, MenuSeparator, MenuTrigger } from '@/components/ui/menu';
 import { PROJECTS, type Project } from '@/mocks/projects';
-import { ACCOUNTS, platformAdmin, roleNamesIn, tenantsOf, TENANT_KEYS } from '@/v35/iam';
+import { accounts, iamStore, platformAdmin, roleNamesIn, tenantsOf, TENANT_KEYS } from '@/v35/iam';
 import { allowedTenant, ALL_TENANT_SCREENS } from '@/v35/screens';
 import { useAccess, useViewAs } from '@/v35/access';
 import { cn } from '@/lib/utils';
@@ -28,6 +28,7 @@ const CREATE: [string, string, LucideIcon][] = [
 export function TopBar({ scope, project, collapsed, onToggleSidebar, onOpenPalette }: { scope: 'platform' | 'project'; project?: Project; collapsed: boolean; onToggleSidebar: () => void; onOpenPalette: () => void }) {
   const nav = useNavigate();
   const { uid, setUid } = useViewAs();
+  iamStore.use(); // menus follow IAM edits
   const access = useAccess(project?.key ?? null);
   const base = `/p/${project?.key ?? 'sceai'}`;
   const pa = platformAdmin(uid);
@@ -189,7 +190,7 @@ export function TopBar({ scope, project, collapsed, onToggleSidebar, onOpenPalet
           </div>
           <MenuLabel>Switch account</MenuLabel>
           <div className="max-h-[320px] overflow-auto">
-            {ACCOUNTS.map((a) => {
+            {accounts().map((a) => {
               const p = platformAdmin(a.id);
               const desc = [...(p ? [p.role] : []), ...TENANT_KEYS.filter((t) => tenantsOf(a.id).includes(t)).map((t) => `${PROJECTS.find((x) => x.key === t)?.name} · ${roleNamesIn(a.id, t)}`)].join(' / ') || 'No access';
               return (

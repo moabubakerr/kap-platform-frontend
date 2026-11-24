@@ -8,6 +8,8 @@
  * Evaluation order: account status → groups → grants → scope → action →
  * access policies; no applicable grant means deny.
  */
+import { createStore } from '@/engine/store';
+
 export type TenantKey = 'sceai' | 'econ' | 'sandbox' | 'default';
 export type ResType = 'agent' | 'collection' | 'tenant';
 
@@ -26,7 +28,7 @@ export const BUILTIN_ROLES: Record<string, string[]> = {
   'Pipeline Operator': ['pipeline:execute'],
 };
 
-export const CUSTOM_ROLES = [{ t: 'sceai' as TenantKey, n: 'Indicator Agent Builder', perms: ['agent:create', 'agent:read', 'agent:update'], by: 'sceai_admin · 96 d ago' }];
+const INITIAL_CUSTOM_ROLES: { t: TenantKey; n: string; perms: string[]; by: string }[] = [{ t: 'sceai' as TenantKey, n: 'Indicator Agent Builder', perms: ['agent:create', 'agent:read', 'agent:update'], by: 'sceai_admin · 96 d ago' }];
 
 export const PLATFORM_ROLES: Record<PlatformAdmin['role'], string[]> = {
   'Platform Administrator': ['platform:read', 'platform:manage', 'config:read', 'config:manage', 'monitor:read', 'monitor:manage', 'audit:read', 'security:read', 'security:manage', 'license:read', 'license:manage'],
@@ -34,7 +36,7 @@ export const PLATFORM_ROLES: Record<PlatformAdmin['role'], string[]> = {
   'Security Officer': ['security:read', 'security:manage', 'audit:read'],
 };
 
-export const USERS: IamUser[] = [
+const INITIAL_USERS: IamUser[] = [
   { id: 'sceai_admin', name: 'SCEAI Administrator', email: 'kap.admin@sceai.gov.qa', idp: 'Microsoft Entra ID · SCEAI', last: '25 min ago', dis: {} },
   { id: 'r.haddad', name: 'Rami Haddad', email: 'rami.haddad@partner.qa', idp: 'Microsoft Entra ID · SCEAI', last: '2 h ago', dis: {} },
   { id: 'k.ibrahim', name: 'Khalid Ibrahim', email: 'k.ibrahim@partner.qa', idp: 'Microsoft Entra ID · SCEAI', last: '40 min ago', dis: {} },
@@ -46,7 +48,7 @@ export const USERS: IamUser[] = [
   { id: 'sbx_analyst', name: 'Sandbox Analyst', email: 'sbx.analyst@kap.internal', idp: 'Keycloak · kap-admin realm', last: '2 d ago', dis: {} },
 ];
 
-export const GROUPS: IamGroup[] = [
+const INITIAL_GROUPS: IamGroup[] = [
   { t: 'sceai', n: 'tenant_admins', d: 'SCEAI tenant administrators', members: ['sceai_admin'] },
   { t: 'sceai', n: 'agent_developers', d: 'Implementation partner developers', members: ['r.haddad', 'k.ibrahim'] },
   { t: 'sceai', n: 'indicator_builders', d: 'SCEAI indicators team', members: ['n.saleh'] },
@@ -58,7 +60,7 @@ export const GROUPS: IamGroup[] = [
   { t: 'sandbox', n: 'sbx_testers', d: 'Sandbox test users', members: ['sbx_analyst'] },
 ];
 
-export const GRANTS: IamGrant[] = [
+const INITIAL_GRANTS: IamGrant[] = [
   { id: 'G-101', t: 'sceai', g: 'tenant_admins', r: 'Tenant Administrator', scope: 'tenant' },
   { id: 'G-102', t: 'sceai', g: 'agent_developers', r: 'Agent Developer', scope: 'agents:*' },
   { id: 'G-103', t: 'sceai', g: 'indicator_builders', r: 'Indicator Agent Builder', scope: 'agents:*' },
@@ -73,7 +75,7 @@ export const GRANTS: IamGrant[] = [
   { id: 'SB-02', t: 'sandbox', g: 'sbx_testers', r: 'Analyst', scope: 'tenant' },
 ];
 
-export const POLICIES: IamPolicy[] = [
+const INITIAL_POLICIES: IamPolicy[] = [
   { t: 'sceai', n: 'L0 · Public', kind: 'Classification', res: ['collection:sceai_articles'], cleared: ['*'] },
   { t: 'sceai', n: 'L1 · Internal', kind: 'Classification', res: ['collection:sceai_indicators', 'dataset:sceai_indicator_observations'], cleared: ['tenant_admins', 'economic_analysts', 'agent_developers', 'indicator_builders', 'agent_reviewers'] },
   { t: 'sceai', n: 'L2 · Restricted', kind: 'Classification', res: ['collection:nds_planning_docs'], cleared: ['tenant_admins'] },
@@ -84,11 +86,35 @@ export const POLICIES: IamPolicy[] = [
   { t: 'sandbox', n: 'Customer data', kind: 'Need-to-know', res: ['collection:customer_c001', 'dataset:c001_transactions', 'document:C001_Service_Agreement.pdf', 'document:C001_Correspondence_2026.eml'], cleared: ['sbx_admins'] },
 ];
 
-export const PLATFORM_ADMINS: PlatformAdmin[] = [
+const INITIAL_PLATFORM_ADMINS: PlatformAdmin[] = [
   { id: 'kap.ops', name: 'KAP Platform Administrator', email: 'kap.ops@kap.internal', role: 'Platform Administrator', st: 'Active', last: 'Now', src: 'Keycloak · kap-admin realm' },
   { id: 'm.alkuwari', name: 'Mariam Al-Kuwari', email: 'm.alkuwari@sceai.gov.qa', role: 'Platform Administrator', st: 'Active', last: '8 min ago', src: 'Keycloak · kap-admin realm' },
   { id: 'r.haddad', name: 'Rami Haddad', email: 'rami.haddad@partner.qa', role: 'Platform Administrator', st: 'Active', last: '2 h ago', src: 'Keycloak · kap-admin realm' },
 ];
+
+export interface IamData {
+  users: IamUser[];
+  groups: IamGroup[];
+  grants: IamGrant[];
+  policies: IamPolicy[];
+  customRoles: { t: TenantKey; n: string; perms: string[]; by: string }[];
+  padmins: PlatformAdmin[];
+}
+
+/**
+ * The editable IAM state (session). Screens that create users, groups, grants,
+ * roles or policies update it, and every access check reads it, so changes take
+ * effect immediately — as in the prototype.
+ */
+export const iamStore = createStore<IamData>(() => ({
+  users: structuredClone(INITIAL_USERS),
+  groups: structuredClone(INITIAL_GROUPS),
+  grants: structuredClone(INITIAL_GRANTS),
+  policies: structuredClone(INITIAL_POLICIES),
+  customRoles: structuredClone(INITIAL_CUSTOM_ROLES),
+  padmins: structuredClone(INITIAL_PLATFORM_ADMINS),
+}));
+const D = () => iamStore.get();
 
 /** Collections per tenant, for "any collection" checks (until the data hub is ported). */
 export const COLLECTIONS: Record<TenantKey, string[]> = {
@@ -101,25 +127,25 @@ export const COLLECTIONS: Record<TenantKey, string[]> = {
 export const TENANT_KEYS: TenantKey[] = ['sceai', 'econ', 'sandbox'];
 
 // ------------------------------------------------------------------ evaluation
-export const rolesIn = (t: TenantKey): Record<string, string[]> => ({ ...BUILTIN_ROLES, ...Object.fromEntries(CUSTOM_ROLES.filter((r) => r.t === t).map((r) => [r.n, r.perms])) });
-export const groupsOf = (uid: string, t: TenantKey) => GROUPS.filter((g) => g.t === t && g.st !== 'Disabled' && g.members.includes(uid)).map((g) => g.n);
-export const platformAdmin = (uid: string) => PLATFORM_ADMINS.find((a) => a.id === uid && a.st === 'Active') ?? null;
+export const rolesIn = (t: TenantKey): Record<string, string[]> => ({ ...BUILTIN_ROLES, ...Object.fromEntries(D().customRoles.filter((r) => r.t === t).map((r) => [r.n, r.perms])) });
+export const groupsOf = (uid: string, t: TenantKey) => D().groups.filter((g) => g.t === t && g.st !== 'Disabled' && g.members.includes(uid)).map((g) => g.n);
+export const platformAdmin = (uid: string) => D().padmins.find((a) => a.id === uid && a.st === 'Active') ?? null;
 export const canPlatform = (uid: string, perm: string) => {
   const pa = platformAdmin(uid);
   return !!pa && (PLATFORM_ROLES[pa.role] ?? []).includes(perm);
 };
 
-const blockedBy = (t: TenantKey, key: string, gs: string[]) => POLICIES.filter((p) => p.t === t && p.res.includes(key)).filter((p) => !(p.cleared.includes('*') || p.cleared.some((x) => gs.includes(x))));
+const blockedBy = (t: TenantKey, key: string, gs: string[]) => D().policies.filter((p) => p.t === t && p.res.includes(key)).filter((p) => !(p.cleared.includes('*') || p.cleared.some((x) => gs.includes(x))));
 
 export interface Decision { ok: boolean; why: string; grant?: IamGrant }
 
 export function evaluate(uid: string, t: TenantKey, perm: string, type: ResType, id = '*'): Decision {
-  const u = USERS.find((x) => x.id === uid);
+  const u = D().users.find((x) => x.id === uid);
   if (!u) return { ok: false, why: 'Not a user of this tenant' };
   if (u.dis[t]) return { ok: false, why: 'Account disabled in this tenant' };
   const gs = groupsOf(uid, t);
   if (!gs.length) return { ok: false, why: 'Not a member of an active group' };
-  const gr = GRANTS.filter((g) => g.t === t && gs.includes(g.g));
+  const gr = D().grants.filter((g) => g.t === t && gs.includes(g.g));
   if (!gr.length) return { ok: false, why: 'No access grant' };
   const RP = rolesIn(t);
   const withPerm = (s: IamGrant[]) => s.filter((g) => (RP[g.r] ?? []).includes(perm));
@@ -164,10 +190,10 @@ export function can(uid: string, t: TenantKey, perm: string, type: ResType, id =
 /** Comma-separated roles a user holds in a tenant (for the account menu). */
 export function roleNamesIn(uid: string, t: TenantKey): string {
   const gs = groupsOf(uid, t);
-  const rs = [...new Set(GRANTS.filter((g) => g.t === t && gs.includes(g.g)).map((g) => g.r))];
+  const rs = [...new Set(D().grants.filter((g) => g.t === t && gs.includes(g.g)).map((g) => g.r))];
   return rs.length ? rs.join(', ') : 'No access';
 }
 
 /** Everyone who can sign in: tenant users plus platform-only administrators. */
-export const ACCOUNTS = [...USERS.map((u) => ({ id: u.id, name: u.name })), ...PLATFORM_ADMINS.filter((a) => !USERS.some((u) => u.id === a.id)).map((a) => ({ id: a.id, name: a.name }))];
+export const accounts = () => [...D().users.map((u) => ({ id: u.id, name: u.name })), ...D().padmins.filter((a) => !D().users.some((u) => u.id === a.id)).map((a) => ({ id: a.id, name: a.name }))];
 export const tenantsOf = (uid: string): TenantKey[] => TENANT_KEYS.filter((t) => groupsOf(uid, t).length > 0);
