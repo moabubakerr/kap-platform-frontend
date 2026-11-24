@@ -1,6 +1,8 @@
-import Porting from '@/features/v35/Porting';
+import { ScreenView } from '@/engine/ScreenView';
+import { serviceAccountsScreen } from './build';
+import { useIamCtx } from './useIamCtx';
 
-/** Placeholder until the hub is ported. */
+/** Service accounts of the tenant (route /p/:tenant/service-accounts). */
 export default function ServiceAccountsPage() {
-  return <Porting />;
+  return <ScreenView model={serviceAccountsScreen(useIamCtx())} />;
 }

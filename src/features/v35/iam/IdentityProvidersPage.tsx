@@ -1,6 +1,8 @@
-import Porting from '@/features/v35/Porting';
+import { ScreenView } from '@/engine/ScreenView';
+import { identityProvidersScreen } from './build';
+import { useIamCtx } from './useIamCtx';
 
-/** Placeholder until the hub is ported. */
+/** Identity provider configuration with group mappings (route /platform/identity). */
 export default function IdentityProvidersPage() {
-  return <Porting />;
+  return <ScreenView model={identityProvidersScreen(useIamCtx())} />;
 }

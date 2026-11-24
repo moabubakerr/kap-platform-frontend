@@ -1,6 +1,8 @@
-import Porting from '@/features/v35/Porting';
+import { ScreenView } from '@/engine/ScreenView';
+import { groupsScreen } from './build';
+import { useIamCtx } from './useIamCtx';
 
-/** Placeholder until the hub is ported. */
+/** Groups of the tenant (route /p/:tenant/groups). */
 export default function GroupsPage() {
-  return <Porting />;
+  return <ScreenView model={groupsScreen(useIamCtx())} />;
 }

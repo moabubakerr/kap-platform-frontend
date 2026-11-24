@@ -1,6 +1,13 @@
-import Porting from '@/features/v35/Porting';
+import { useParams } from 'react-router-dom';
+import { useCrumbs } from '@/app/shell/crumbs';
+import { ScreenView } from '@/engine/ScreenView';
+import { GROUP_TABS, groupScreen } from './build';
+import { useIamCtx } from './useIamCtx';
 
-/** Placeholder until the hub is ported. */
+/** A group: Members · Access (route groups/:groupId/:tab?). */
 export default function GroupPage() {
-  return <Porting />;
+  const { groupId = '', tab } = useParams();
+  const model = groupScreen(useIamCtx(), groupId, tab);
+  useCrumbs([groupId, !model.denied && (GROUP_TABS.find((t) => t[0] === model.head.tab)?.[1] ?? 'Members')]);
+  return <ScreenView model={model} />;
 }

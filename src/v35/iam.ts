@@ -67,6 +67,7 @@ const INITIAL_GRANTS: IamGrant[] = [
   { id: 'G-105', t: 'sceai', g: 'agent_reviewers', r: 'Agent Reviewer', scope: 'agents:*' },
   { id: 'G-104', t: 'sceai', g: 'economic_analysts', r: 'Analyst', scope: 'agent:sceai_indicators_agent' },
   { id: 'G-106', t: 'sceai', g: 'economic_analysts', r: 'Analyst', scope: 'agent:sceai_indicators_oxford' },
+  { id: 'G-107', t: 'sceai', g: 'economic_analysts', r: 'Analyst', scope: 'collection:sceai_indicators' },
   { id: 'EA-01', t: 'econ', g: 'ea_admins', r: 'Tenant Administrator', scope: 'tenant' },
   { id: 'EA-02', t: 'econ', g: 'ea_analysts', r: 'Analyst', scope: 'agent:policy_brief_agent' },
   { id: 'EA-03', t: 'econ', g: 'ea_analysts', r: 'Analyst', scope: 'collection:budget_reports' },

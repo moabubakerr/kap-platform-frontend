@@ -1,6 +1,8 @@
-import Porting from '@/features/v35/Porting';
+import { ScreenView } from '@/engine/ScreenView';
+import { platformAdminsScreen } from './build';
+import { useIamCtx } from './useIamCtx';
 
-/** Placeholder until the hub is ported. */
+/** Platform administrators (route /platform/admins). */
 export default function PlatformAdminsPage() {
-  return <Porting />;
+  return <ScreenView model={platformAdminsScreen(useIamCtx())} />;
 }

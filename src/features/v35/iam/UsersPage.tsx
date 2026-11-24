@@ -1,6 +1,8 @@
-import Porting from '@/features/v35/Porting';
+import { ScreenView } from '@/engine/ScreenView';
+import { usersScreen } from './build';
+import { useIamCtx } from './useIamCtx';
 
-/** Placeholder until the hub is ported. */
+/** Users of the tenant (route /p/:tenant/users). */
 export default function UsersPage() {
-  return <Porting />;
+  return <ScreenView model={usersScreen(useIamCtx())} />;
 }
