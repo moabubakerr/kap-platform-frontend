@@ -35,6 +35,19 @@ The console follows the v35 design (`design-ref-v35/`, unpacked from `docs/KAP_C
 - `src/v35/screens.ts` — navigation, paths and screen permissions. The shell already hides screens and guards routes; pages only gate actions and records.
 - Tenant in a page: `useScope()` / `useBase()` from `@/app/shell/AppShell`; `project.key` is the tenant key (`sceai`, `econ`, `sandbox`, `default`). Prototype tenant keys are the same.
 
+## Live hubs (real KAP data)
+
+The `sandbox` tenant is `live` (`src/mocks/projects.ts`): its hubs show and change real KAP data on the test stand. Other tenants keep the design's sample data.
+
+- Path: console → `/api/platform/t/{tenantId}/kap/{path}` → platform-api (`kap_proxy.py`, allowlisted, adds the tenant's KAP credentials) → KAP `/api/{path}`. The console never calls KAP directly.
+- Client: `src/api/kap.ts` — `kap(tenantId, method, path, body?, query?)`, `kapGet`, `kapAll` (all pages), `KapApiError` (`status`, `type`, `message` incl. KAP field errors), `kapError(e)`.
+- Hub wiring: `src/v35/live.tsx` — `useLiveLoad(key, tenantKey, load)` fills the hub's store from KAP for the live tenant (replace that tenant's slice with mapped KAP records; keys shared between hubs share one load); `live.reload()` after a write; `liveSave(live, write)` for dialog save handlers (returns KAP's error message or ''); `<LiveBanner live what />` above the screen.
+- Dialogs accept async handlers: `save`/`finish` may return `Promise<string>`, `confirm` fns may return `Promise<string | void>` (error shown in the dialog, button shows progress).
+- Map KAP records onto the hub's existing types in a pure `fromKap.ts` (tested), so builders stay unchanged. Fields KAP doesn't have get honest defaults (`—`, empty lists), never invented numbers. Features KAP doesn't have (versions/approvals, evaluation, workflows, schedules) stay session-only for the live tenant and say so where the action happens.
+- Writes: build KAP bodies in `fromKap.ts` too (`toKapCreate`, `toKapPatch`), then `kap()`; also `recordAudit()`. Submitting agent jobs uses `submitJob` (`src/api/platformLive.ts`), never the passthrough.
+- KAP's API: `node ../scripts/openapi-op.cjs ../kap-platform/openai.json GET /api/agents`, `node ../scripts/openapi-schemas.cjs ../kap-platform/openai.json AgentOut`, endpoint list `../docs/kap-openapi-endpoints.md`. Guides: `../docs/converted/*.md`, `../docs/kap-platform-layer.md`.
+- Tests cannot reach KAP: test `fromKap.ts` with fixtures shaped from the OpenAPI schemas.
+
 ## Conventions
 
 - Reproduce copy, numbers, columns, statuses and behaviour from `app.js` (HTML wins on visuals). Port each tenant's data (sceai, econ, sandbox) — v35 has data for all three.

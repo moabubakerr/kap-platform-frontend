@@ -10,6 +10,8 @@
  *   d.secret('Credential for etl-nightly', 'kap_live_…');
  *
  * A save/finish function returns an error message ('' = success, dialog closes).
+ * It may be async (live tenants call KAP): the button shows progress meanwhile.
+ * A confirm fn may also be async and return an error message, shown in the dialog.
  */
 import * as React from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
@@ -21,6 +23,8 @@ import { Diagram } from './Diagram';
 import type { DiagramSpec } from './types';
 
 export type FormValues = Record<string, any>;
+/** '' = success; otherwise the error shown in the dialog */
+export type SaveResult = string | Promise<string>;
 
 export type FormField =
   | { type: 'text' | 'num'; k: string; label: string; val?: string; ph?: string; hint?: string; ro?: boolean }
@@ -42,17 +46,17 @@ export interface WizardSpec {
   fields: (step: number, v: FormValues, set: (k: string, val: any) => void) => FormField[];
   /** may correct values through `set` (e.g. defaults) before returning an error or '' */
   validate: (step: number, v: FormValues, set: (k: string, val: any) => void) => string;
-  finish: (v: FormValues) => string;
+  finish: (v: FormValues) => SaveResult;
 }
 
-type FormState = { title: string; fields: FormField[]; saveL: string; save: (v: FormValues) => string; v: FormValues; err: string } | { wiz: WizardSpec; v: FormValues; step: number; err: string };
-type ConfirmState = { title: string; body: string; items: { a: string; b?: string; c?: string }[]; cta: string; fn: () => void; blocked?: boolean };
+type FormState = { title: string; fields: FormField[]; saveL: string; save: (v: FormValues) => SaveResult; v: FormValues; err: string } | { wiz: WizardSpec; v: FormValues; step: number; err: string };
+type ConfirmState = { title: string; body: string; items: { a: string; b?: string; c?: string }[]; cta: string; fn: () => void | Promise<void | string>; blocked?: boolean; err?: string; busy?: boolean };
 type SecretState = { title: string; tok: string; sub?: string };
 
 interface Dialogs {
-  form: (title: string, fields: FormField[], saveL: string, save: (v: FormValues) => string) => void;
+  form: (title: string, fields: FormField[], saveL: string, save: (v: FormValues) => SaveResult) => void;
   wizard: (spec: WizardSpec) => void;
-  confirm: (title: string, body: string, items: ConfirmState['items'], cta: string, fn: () => void) => void;
+  confirm: (title: string, body: string, items: ConfirmState['items'], cta: string, fn: () => void | Promise<void | string>) => void;
   /** a confirm without an action: the operation is blocked and the body explains why */
   info: (title: string, body: string, items?: ConfirmState['items']) => void;
   secret: (title: string, tok: string, sub?: string) => void;
@@ -94,10 +98,11 @@ export function DialogsProvider({ children }: { children: React.ReactNode }) {
         <Shell title={confirm.title} width={500} onClose={() => setConfirm(null)} footer={
           <>
             <Button size="sm" variant="outline" onClick={() => setConfirm(null)}>{confirm.blocked ? 'Close' : 'Cancel'}</Button>
-            {!confirm.blocked && <Button size="sm" variant="danger" onClick={() => { const f = confirm.fn; setConfirm(null); f(); }}>{confirm.cta}</Button>}
+            {!confirm.blocked && <Button size="sm" variant="danger" disabled={confirm.busy} onClick={() => runConfirm(confirm, setConfirm)}>{confirm.busy ? 'Working…' : confirm.cta}</Button>}
           </>
         }>
           <div className="text-[13.5px]">{confirm.body}</div>
+          {confirm.err && <div className="rounded-sm bg-danger-bg px-3 py-2.5 text-[13px] text-danger-fg">{confirm.err}</div>}
           {confirm.items.length > 0 && (
             <div className="max-h-[220px] overflow-auto rounded-sm border border-line-subtle">
               {confirm.items.map((u, i) => (
@@ -124,6 +129,18 @@ export function DialogsProvider({ children }: { children: React.ReactNode }) {
         </Shell>
       )}
     </Ctx.Provider>
+  );
+}
+
+/** Run a confirm action; async actions keep the dialog open until done and show their error. */
+function runConfirm(c: ConfirmState, set: React.Dispatch<React.SetStateAction<ConfirmState | null>>) {
+  const r = c.fn();
+  if (!(r instanceof Promise)) return set((s) => (s === c ? null : s));
+  const busy = { ...c, busy: true, err: '' };
+  set(busy);
+  r.then(
+    (e) => set((s) => (s === busy ? (e ? { ...busy, busy: false, err: e } : null) : s)),
+    (e) => set((s) => (s === busy ? { ...busy, busy: false, err: e instanceof Error ? e.message : String(e) } : s)),
   );
 }
 
@@ -255,17 +272,28 @@ function FormDialog({ state, set }: { state: FormState; set: React.Dispatch<Reac
   const last = isWiz && state.step === state.wiz.steps.length - 1;
   const saveL = isWiz ? (last ? state.wiz.finishL : 'Next') : state.saveL;
 
+  const [busy, setBusy] = React.useState(false);
+  /** apply a save result: close on '', else show the error (async results resolve first) */
+  const settle = (r: SaveResult, failed: FormState) => {
+    if (!(r instanceof Promise)) return r ? set(failed) : closeIfSame(state);
+    setBusy(true);
+    r.then(
+      (e) => { setBusy(false); if (e) set((s) => (s === state ? { ...failed, err: e } : s)); else closeIfSame(state); },
+      (e) => { setBusy(false); set((s) => (s === state ? { ...failed, err: e instanceof Error ? e.message : String(e) } : s)); },
+    );
+  };
   const save = () => {
+    if (busy) return;
     if (isWiz) {
       const vals = { ...state.v };
       const e = state.wiz.validate(state.step, vals, (k, val) => { vals[k] = val; });
       if (e) return set({ ...state, v: vals, err: e });
       if (!last) return set({ ...state, v: vals, step: state.step + 1, err: '' });
-      const e2 = state.wiz.finish(vals);
-      return e2 ? set({ ...state, v: vals, err: e2 }) : closeIfSame(state);
+      const r = state.wiz.finish(vals);
+      return settle(r, { ...state, v: vals, err: typeof r === 'string' ? r : '' });
     }
-    const e = state.save(state.v);
-    return e ? set({ ...state, err: e }) : closeIfSame(state);
+    const r = state.save(state.v);
+    return settle(r, { ...state, err: typeof r === 'string' ? r : '' });
   };
 
   return (
@@ -283,8 +311,8 @@ function FormDialog({ state, set }: { state: FormState; set: React.Dispatch<Reac
               Back
             </Button>
           )}
-          <Button size="sm" onClick={save}>
-            {saveL}
+          <Button size="sm" onClick={save} disabled={busy}>
+            {busy ? 'Saving…' : saveL}
           </Button>
         </>
       }
