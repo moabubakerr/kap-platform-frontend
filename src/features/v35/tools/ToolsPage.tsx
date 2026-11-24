@@ -2,6 +2,7 @@ import * as React from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useCrumbs } from '@/app/shell/crumbs';
 import { ScreenView } from '@/engine/ScreenView';
+import { LiveBanner } from '@/v35/live';
 import { emptyTenant, modHead, toolsScreen, TOOLS_TABS, type ListFilters } from './build';
 import { useToolsCtx } from './useTools';
 
@@ -15,5 +16,10 @@ export default function ToolsPage() {
     const head = modHead('AI Agent Tools', TOOLS_TABS, 'tools', (v) => c.nav(v === 'mcpconn' ? `${c.base}/tools/mcp` : `${c.base}/tools`));
     return <ScreenView model={emptyTenant(head, 'tools', c.tn, c.key === 'default')} />;
   }
-  return <ScreenView model={toolsScreen(c, f, setF, sp.get('open') ?? undefined)} />;
+  return (
+    <>
+      <LiveBanner live={c.live} what="tools and agents' allowed tools" />
+      <ScreenView model={toolsScreen(c, f, setF, sp.get('open') ?? undefined)} />
+    </>
+  );
 }

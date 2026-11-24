@@ -5,23 +5,72 @@
  */
 import * as React from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useQueryClient } from '@tanstack/react-query';
 import { useBase, useScope } from '@/app/shell/AppShell';
 import { useDialogs, type FormField, type FormValues } from '@/engine/dialogs';
 import { createStore } from '@/engine/store';
+import { kap, kapAll, kapError } from '@/api/kap';
 import { useAccess } from '@/v35/access';
+import { liveSave, liveTenantId, useLiveLoad, type Live } from '@/v35/live';
 import { recordAudit } from '@/v35/data/audit';
 import { businessStore } from '@/v35/data/businessData';
 import { ingestStore } from '@/v35/data/ingest';
 import { AF_TENANT_NAME, agentFactoryStore, cfgOf, isAfTenant, resolveModel, wfUsing, type AfTenant, type AfTenantKey, type AgentFactoryData, type Schedule } from '@/v35/data/agentFactory';
 import type { TenantKey } from '@/v35/iam';
 import {
-  assignInDraft, canUpd, discover, eventsOf, grantAvail, grantCandidates, grantKind, grantLabel, nameOf, newServerValues, objOf, pubTools, SCHED_STEPS, schedFields, schedRecord,
+  assignInDraft, canUpd, discover, eventsOf, grantAvail, grantCandidates, grantKind, grantLabel, kapServerFields, nameOf, newServerValues, objOf, pubTools, SCHED_STEPS, schedFields, schedRecord,
   schedValues, serverFields, serverValues, simCheck, SERVER_SECRETS, toolImpact, usersOfServer, validateSched, validateServer, workTools,
-  type AfBase, type ConnTest, type McpCtx, type McpRow, type SchedCtx, type ToolItem, type ToolsCtx,
+  type AfBase, type ConnTest, type LiveTools, type McpCtx, type McpRow, type SchedCtx, type ToolItem, type ToolsCtx,
 } from './build';
+import {
+  agentGrants, applyLiveMcp, checkHealth, checkMessage, kapServerValues, knownTools, newKapServerValues, toKapCreate, toKapPatch, toKapRestore, toMcpServer, toolNames, toSrvInfo, validateKapServer,
+  type KapAgentTools, type KapMcpCheck, type KapMcpServer,
+} from './fromKap';
 
 /** Connection test results (prototype `mcpTest`), keyed `tenant:server`. */
 export const connTestStore = createStore<Record<string, ConnTest>>(() => ({}));
+
+// ============================================================ live tenant (KAP)
+
+interface LiveMcpState {
+  servers: KapMcpServer[];
+  agents: KapAgentTools[];
+  /** store agent id → KAP agent id */
+  ids: Record<string, string>;
+}
+/** Raw KAP records of the live tenant's MCP slice, by tenant. */
+export const liveMcpStore = createStore<Record<string, LiveMcpState>>(() => ({}));
+/** Last KAP check per server (session only; KAP stores no check state), keyed `tenant:server`. */
+export const kapCheckStore = createStore<Record<string, KapMcpCheck>>(() => ({}));
+
+const checksOf = (t: string) => Object.fromEntries(Object.entries(kapCheckStore.get()).filter(([k]) => k.startsWith(`${t}:`)).map(([k, v]) => [k.slice(t.length + 1), v]));
+
+/** (Re)write tenant t's MCP slice of the agent factory store from the raw KAP records and the session's checks. */
+function applyLive(t: AfTenantKey) {
+  const L = liveMcpStore.get()[t];
+  if (!L) return;
+  const checks = checksOf(t);
+  const storeIds = agentFactoryStore.get().tenants[t].agents.map((a) => a.id);
+  const { grants, ids } = agentGrants(L.agents, storeIds, checks);
+  agentFactoryStore.update((all) => applyLiveMcp(all.mcp, t, L.servers.map((s) => toMcpServer(s, t, checks[s.name])), grants));
+  liveMcpStore.update((x) => { x[t].ids = ids; });
+}
+
+/** Loads the live tenant's MCP servers and agents' allowed_tools (key 'af-mcp'). */
+function useMcpLive(key: TenantKey | null): Live {
+  const live = useLiveLoad('af-mcp', key, async (tenantId) => {
+    if (!isAfTenant(key)) return;
+    const [servers, agents] = await Promise.all([kapAll<KapMcpServer>(tenantId, 'mcp-servers'), kapAll<KapAgentTools>(tenantId, 'agents')]);
+    liveMcpStore.update((x) => { x[key] = { servers, agents, ids: {} }; });
+    applyLive(key);
+  });
+  // the agents hub (key 'af-agents') may replace the store's agents: re-key the grants to its agent ids
+  const agentIds = agentFactoryStore.use().tenants[isAfTenant(key) ? key : 'sandbox'].agents.map((a) => a.id).join('\n');
+  React.useEffect(() => {
+    if (live.on && isAfTenant(key) && liveMcpStore.get()[key]) applyLive(key);
+  }, [agentIds, live.on, key]);
+  return live;
+}
 
 const TENANT_LABEL: Record<string, string> = { ...AF_TENANT_NAME, default: 'Default' };
 
@@ -34,9 +83,12 @@ export function useAfBase() {
   const key = scope.kind === 'project' ? (scope.project.key as TenantKey) : null;
   const access = useAccess(key);
   const af = agentFactoryStore.use();
+  const lm = liveMcpStore.use();
   const t = isAfTenant(key) ? key : null;
   const tn = TENANT_LABEL[key ?? ''] ?? key ?? '';
-  const c: AfBase | null = t ? { t, tn, af, D: af.tenants[t], actor: access.uid, can: access.can } : null;
+  const L = t && liveTenantId(t) ? lm[t] : undefined;
+  const liveTools: LiveTools | undefined = t && liveTenantId(t) ? { info: Object.fromEntries((L?.servers || []).map((s) => [s.name, toSrvInfo(s)])), known: knownTools(L?.agents || []) } : undefined;
+  const c: AfBase | null = t ? { t, tn, af, D: af.tenants[t], actor: access.uid, can: access.can, ...(liveTools ? { liveTools } : {}) } : null;
   return { key, t, tn, c, base, nav, d, access, af };
 }
 
@@ -61,16 +113,48 @@ function helpers(b: Base, t: AfTenantKey) {
 
 // ============================================================ tools
 
-export function useToolsCtx(): (ToolsCtx & { ok: true }) | (Base & { ok: false }) {
+/** KAP write of an agent's allowed_tools; reloads this hub and the agents hub. */
+function patchAllowedTools(live: Live, qc: ReturnType<typeof useQueryClient>, t: AfTenantKey, agent: string, keys: string[], after: () => void): Promise<string> {
+  const kid = liveMcpStore.get()[t]?.ids[agent];
+  if (!kid || !live.tenantId) return Promise.resolve(`${agent} is not an agent in KAP. Refresh, then try again.`);
+  const tid = live.tenantId;
+  return liveSave(live, () => kap(tid, 'PATCH', `agents/${encodeURIComponent(kid)}`, { allowed_tools: toolNames(keys) }), () => {
+    after();
+    void qc.invalidateQueries({ queryKey: ['live', 'af-agents'] });
+  });
+}
+
+export function useToolsCtx(): ((ToolsCtx & { ok: true }) | (Base & { ok: false })) & { live: Live } {
   const b = useAfBase();
+  const live = useMcpLive(b.key);
+  const qc = useQueryClient();
   return React.useMemo(() => {
-    if (!b.c || !b.t) return { ...b, ok: false as const };
+    if (!b.c || !b.t) return { ...b, ok: false as const, live };
     const t = b.t;
     const { setA, audit, fresh, go } = helpers(b, t);
     const { d } = b;
     const actor = b.access.uid;
 
+    /** live: KAP has no drafts or versions; the tool is added to the agent's allowed_tools at once */
+    const assignLive = (tool: ToolItem) => {
+      const c = fresh();
+      const ids = liveMcpStore.get()[t]?.ids || {};
+      const cand = c.D.agents.filter((a) => ids[a.id] && !pubTools(c, a.id).map((k) => k.split(':').pop()).includes(tool.n) && canUpd(c, a.id)).map((a) => a.id);
+      if (!cand.length) {
+        d.toast(`Every KAP agent you can edit already has ${tool.n}.`);
+        return;
+      }
+      d.form(`Assign ${tool.n} to an agent`, [
+        { type: 'select', k: 'a', label: 'Agent', opts: cand, val: cand[0] },
+        { type: 'note', text: 'KAP has no agent drafts: the tool is added to the agent’s allowed_tools in KAP and applies to its next jobs.' },
+      ], 'Add to allowed tools', (v) => patchAllowedTools(live, qc, t, v.a, pubTools(fresh(), v.a).concat(tool.key), () => {
+        d.toast(`${tool.n} added to ${v.a} in KAP.`);
+        audit('Granted tools to agent', `${v.a} · ${tool.n} · KAP allowed_tools`, 'AI Agent Tools');
+      }));
+    };
+
     const assign = (tool: ToolItem) => {
+      if (live.on) return assignLive(tool);
       const c = fresh();
       const cand = c.D.agents.filter((a) => a.st !== 'Archived' && !workTools(c, a.id).includes(tool.key) && canUpd(c, a.id)).map((a) => a.id);
       if (!cand.length) {
@@ -95,7 +179,9 @@ export function useToolsCtx(): (ToolsCtx & { ok: true }) | (Base & { ok: false }
     const disable = (tool: ToolItem) => {
       const aff = toolImpact(fresh(), tool);
       const fields: FormField[] = [
-        { type: 'note', tone: 'bad', label: 'Takes effect immediately', text: 'Emergency disablement takes effect at once, without a new version. Agents stop calling it at once and answer without it or report the limitation.' },
+        live.on
+          ? { type: 'note', tone: 'warn', label: 'This console session only', text: 'KAP has no emergency disable for a tool: this marks the tool disabled here only, and KAP agents keep calling it. To stop them, remove it from their allowed tools (MCP Connections · Agent tool assignments) or deactivate its MCP server.' }
+          : { type: 'note', tone: 'bad', label: 'Takes effect immediately', text: 'Emergency disablement takes effect at once, without a new version. Agents stop calling it at once and answer without it or report the limitation.' },
         ...(aff.length ? [{ type: 'kv', label: 'Potentially affected', rows: aff } as FormField] : []),
         { type: 'text', k: 'reason', label: 'Reason', ph: 'e.g. Unsafe answers observed in job b1c94f08' },
         { type: 'select', k: 'ack', label: 'Confirmation', opts: ['Select', `Disable ${tool.n} now`], val: 'Select' },
@@ -106,7 +192,7 @@ export function useToolsCtx(): (ToolsCtx & { ok: true }) | (Base & { ok: false }
         if (v.ack === 'Select') return 'Confirm the disablement.';
         const ref = `AUD-${String(Date.now()).slice(-6)}`;
         setA((D) => { D.toolDis[tool.key] = { by: actor, at: 'just now', reason, ref }; });
-        d.toast(`${tool.n} disabled immediately · audit ${ref}.`);
+        d.toast(live.on ? `${tool.n} marked disabled in this console session only · KAP is unchanged.` : `${tool.n} disabled immediately · audit ${ref}.`);
         audit('Emergency disabled tool', `${tool.key} · ${reason} · ${ref} · affects ${tool.pub.join(', ') || 'no agents'}`, 'AI Governance');
         return '';
       });
@@ -127,17 +213,19 @@ export function useToolsCtx(): (ToolsCtx & { ok: true }) | (Base & { ok: false }
       go: { tab: (v) => (v === 'mcpconn' ? go.mcp() : go.tools()), agent: go.agent, workflow: go.workflow, mcp: go.mcp, audit: go.audit },
       a: { assign, disable, reenable },
     };
-    return { ...ctx, ok: true as const };
-  }, [b.c, b.t, b.d, b.nav, b.base, b.access]); // eslint-disable-line react-hooks/exhaustive-deps
+    return { ...ctx, ok: true as const, live };
+  }, [b.c, b.t, b.d, b.nav, b.base, b.access, live, qc]); // eslint-disable-line react-hooks/exhaustive-deps
 }
 
 // ============================================================ MCP connections
 
-export function useMcpCtx(): (McpCtx & { ok: true }) | (Base & { ok: false }) {
+export function useMcpCtx(): ((McpCtx & { ok: true }) | (Base & { ok: false })) & { live: Live } {
   const b = useAfBase();
   const tests = connTestStore.use();
+  const live = useMcpLive(b.key);
+  const qc = useQueryClient();
   return React.useMemo(() => {
-    if (!b.c || !b.t) return { ...b, ok: false as const };
+    if (!b.c || !b.t) return { ...b, ok: false as const, live };
     const t = b.t;
     const { audit, fresh, go } = helpers(b, t);
     const { d } = b;
@@ -145,7 +233,128 @@ export function useMcpCtx(): (McpCtx & { ok: true }) | (Base & { ok: false }) {
     const srv =(n: string) => agentFactoryStore.get().mcp.servers.find((s) => s.n === n);
     const setTest = (n: string, v: ConnTest) => connTestStore.update((x) => { x[`${t}:${n}`] = v; });
 
+    // ---------------- live tenant: KAP writes
+    const tid = live.tenantId;
+    const raw = (n: string) => liveMcpStore.get()[t]?.servers.find((s) => s.name === n);
+
+    /** POST …/check; the result is kept for the session and drives health. Returns the message. */
+    const runCheck = async (id: string, n: string): Promise<{ ok: boolean; m: string }> => {
+      const ck = await kap<KapMcpCheck>(tid!, 'POST', `mcp-servers/${encodeURIComponent(id)}/check`);
+      kapCheckStore.update((x) => { x[`${t}:${n}`] = ck; });
+      applyLive(t);
+      return { ok: checkHealth(ck) !== 'Failing', m: checkMessage(ck) };
+    };
+
+    const testLive = async (n: string) => {
+      const k = raw(n);
+      if (!k || !tid) return;
+      setTest(n, { s: 'busy', m: '' });
+      try {
+        const r = await runCheck(k.id, n);
+        setTest(n, { s: r.ok ? 'ok' : 'fail', m: r.m });
+        d.toast(`${n}: ${r.m}`);
+        audit('Checked MCP server', `${n} · ${r.m}`, 'AI Agent Tools');
+      } catch (e) {
+        const m = `KAP check failed: ${kapError(e)}`;
+        setTest(n, { s: 'fail', m });
+        d.toast(`${n}: ${m}`);
+      }
+    };
+
+    const wizardLive = (prevName: string | null) => {
+      const prev = prevName ? srv(prevName) ?? null : null;
+      const k = prevName ? raw(prevName) : undefined;
+      const isEdit = !!prev && !!k;
+      const info = k ? toSrvInfo(k) : null;
+      const names = (liveMcpStore.get()[t]?.servers || []).map((s) => s.name);
+      d.wizard({
+        title: isEdit ? `Configure · ${prev!.n}` : 'Register MCP Server',
+        steps: ['Connection', 'Limits and TLS', 'Review'],
+        finishL: isEdit ? 'Save' : 'Register',
+        initial: isEdit ? kapServerValues(prev!, info!) : newKapServerValues(),
+        fields: (step, v) => kapServerFields(step, v, isEdit, info?.headers || []),
+        validate: (step, v) => (step < 2 ? validateKapServer(v, names, isEdit, step) : ''),
+        finish: async (v) => {
+          const e = validateKapServer(v, names, isEdit);
+          if (e) return e;
+          if (!tid) return 'The tenant is not live.';
+          if (isEdit) {
+            const body = toKapPatch(v, prev!, info!);
+            if (!Object.keys(body).length) return '';
+            return liveSave(live, async () => {
+              await kap(tid, 'PATCH', `mcp-servers/${encodeURIComponent(k!.id)}`, body);
+              setTest(prev!.n, { s: 'busy', m: '' });
+              runCheck(k!.id, prev!.n).then((r) => setTest(prev!.n, { s: r.ok ? 'ok' : 'fail', m: r.m }), (er) => setTest(prev!.n, { s: 'fail', m: `KAP check failed: ${kapError(er)}` }));
+            }, () => {
+              d.toast(`${prev!.n} saved in KAP.`);
+              audit('Updated tenant MCP server', `${prev!.n} · ${Object.keys(body).join(', ')}`, 'AI Agent Tools');
+            });
+          }
+          const name = String(v.n).trim();
+          return liveSave(live, async () => {
+            const created = await kap<KapMcpServer>(tid, 'POST', 'mcp-servers', toKapCreate(v));
+            setTest(name, { s: 'busy', m: '' });
+            runCheck(created.id, name).then((r) => setTest(name, { s: r.ok ? 'ok' : 'fail', m: r.m }), (er) => setTest(name, { s: 'fail', m: `KAP check failed: ${kapError(er)}` }));
+          }, () => {
+            d.toast(`${name} registered in KAP. Checking the connection…`);
+            audit('Registered tenant MCP server', `${name} · KAP`, 'AI Agent Tools');
+            window.setTimeout(() => go.mcp(name), 0);
+          });
+        },
+      });
+    };
+
+    const toggleLive = (r: McpRow) => {
+      const k = raw(r.n);
+      if (!k || !tid) return;
+      if (k.is_active) {
+        d.confirm(`Deactivate ${r.n}?`, 'KAP keeps the server deactivated with its identifier; registering the same name again brings it back. KAP refuses (409) while a tool in the tenant configuration still references it.', [], 'Deactivate', () =>
+          liveSave(live, () => kap(tid, 'DELETE', `mcp-servers/${encodeURIComponent(k.id)}`), () => {
+            d.toast(`${r.n} deactivated in KAP.`);
+            audit('Disabled MCP connection', `${r.n} · KAP deactivate`, 'AI Agent Tools');
+          }),
+        );
+        return;
+      }
+      const info = toSrvInfo(k);
+      d.confirm(`Reactivate ${r.n}?`, `KAP brings the server back by registering its name again with the stored URL and settings.${info.headers.length ? ` Header values are write-only and are not sent again: set ${info.headers.join(', ')} with Configure afterwards.` : ''}`, [], 'Reactivate', () =>
+        liveSave(live, () => kap(tid, 'POST', 'mcp-servers', toKapRestore(r.s, info)), () => {
+          d.toast(`${r.n} reactivated in KAP.`);
+          audit('Enabled tenant MCP server', `${r.n} · KAP`, 'AI Agent Tools');
+        }),
+      );
+    };
+
+    const grantLive = (a: string) => {
+      const cur = (agentFactoryStore.get().mcp.grants[t] || {})[a] || [];
+      const curNames = toolNames(cur);
+      const L = liveMcpStore.get()[t];
+      const opts = [...new Set(knownTools(L?.agents || []).concat(curNames))].sort();
+      const missing = cur.filter((g) => !g.startsWith('kap:'));
+      const fields: FormField[] = [
+        { type: 'chips', k: 'on', label: 'Allowed tools', opts, val: curNames },
+        { type: 'text', k: 'more', label: 'Other tool names', ph: 'comma-separated', hint: 'Each name must be a tool of the tenant configuration; KAP rejects unknown names.' },
+        ...(missing.length ? [{ type: 'note', tone: 'warn', text: `Reported missing on their MCP server by the last check: ${missing.map(grantLabel).join(', ')}.` } as FormField] : []),
+        { type: 'note', text: 'Saved to the agent’s allowed_tools in KAP; applies to its next jobs. Tools are listed from KAP’s built-in hybrid_search and every agent’s allowed tools.' },
+      ];
+      d.form(`Tools · ${a}`, fields, 'Save', (v: FormValues) => {
+        const more = String(v.more || '').split(',').map((x) => x.trim()).filter(Boolean);
+        const bad = more.find((x) => !/^[A-Za-z0-9_.-]+$/.test(x));
+        if (bad) return `"${bad}" is not a tool name.`;
+        const next = toolNames(((v.on as string[]) || []).concat(more));
+        const add = next.filter((x) => !curNames.includes(x));
+        const rem = curNames.filter((x) => !next.includes(x));
+        if (!add.length && !rem.length) return '';
+        return patchAllowedTools(live, qc, t, a, next, () => {
+          d.toast(`Tools for ${a} updated in KAP.`);
+          if (add.length) audit('Granted tools to agent', `${a} · ${add.join(', ')} · KAP allowed_tools`, 'AI Agent Tools');
+          if (rem.length) audit('Removed tools from agent', `${a} · ${rem.join(', ')} · KAP allowed_tools`, 'AI Agent Tools');
+        });
+      });
+    };
+
     const test = (n: string) => {
+      if (live.on) return void testLive(n);
       const s = srv(n);
       if (!s) return;
       const r = simCheck(s);
@@ -169,6 +378,10 @@ export function useMcpCtx(): (McpCtx & { ok: true }) | (Base & { ok: false }) {
     };
 
     const enableTools = (n: string) => {
+      if (live.on) {
+        d.info(`Permitted tools · ${n}`, 'KAP has no per-tenant tool enablement and does not list a server’s tools: tools are defined in the tenant configuration, and agents get them through their allowed tools.');
+        return;
+      }
       const s = srv(n);
       if (!s) return;
       const af = agentFactoryStore.get();
@@ -195,6 +408,7 @@ export function useMcpCtx(): (McpCtx & { ok: true }) | (Base & { ok: false }) {
     };
 
     const serverWizard = (prevName: string | null) => {
+      if (live.on) return wizardLive(prevName);
       const prev = prevName ? srv(prevName) ?? null : null;
       const isEdit = !!prev;
       d.wizard({
@@ -241,6 +455,7 @@ export function useMcpCtx(): (McpCtx & { ok: true }) | (Base & { ok: false }) {
     };
 
     const toggle = (r: McpRow) => {
+      if (live.on) return toggleLive(r);
       if (r.s.status === 'Disabled') {
         agentFactoryStore.update((all) => {
           const x = all.mcp.servers.find((y) => y.n === r.n);
@@ -266,6 +481,8 @@ export function useMcpCtx(): (McpCtx & { ok: true }) | (Base & { ok: false }) {
     };
 
     const remove = (r: McpRow) => {
+      // KAP has no delete: DELETE deactivates
+      if (live.on) return toggleLive(r);
       const plat = r.isPlatS;
       const items = r.users.map((a) => ({ a: b.tn, b: 'Agent', c: a }));
       const title = `${plat ? `Remove ${r.n} from ${b.tn}` : `Delete ${r.n}`}?`;
@@ -291,6 +508,7 @@ export function useMcpCtx(): (McpCtx & { ok: true }) | (Base & { ok: false }) {
 
     /** Edit an agent's published tool grants (prototype mcpAsg). */
     const grantFor = (a: string) => {
+      if (live.on) return grantLive(a);
       const af = agentFactoryStore.get();
       const cur = (af.mcp.grants[t] || {})[a] || [];
       const all = [...new Set(grantCandidates(af, t).concat(cur))];
@@ -332,8 +550,8 @@ export function useMcpCtx(): (McpCtx & { ok: true }) | (Base & { ok: false }) {
       go: { tab: (v) => (v === 'mcpconn' ? go.mcp() : go.tools()), agent: go.agent, workflow: go.workflow, mcp: go.mcp, audit: go.audit, tool: (k) => go.tools(`tl:${k}`) },
       a: { register: () => serverWizard(null), test, enableTools, configure: (n) => serverWizard(n), toggle, remove, grant },
     };
-    return { ...ctx, ok: true as const };
-  }, [b.c, b.t, b.d, b.nav, b.base, b.access, tests]); // eslint-disable-line react-hooks/exhaustive-deps
+    return { ...ctx, ok: true as const, live };
+  }, [b.c, b.t, b.d, b.nav, b.base, b.access, tests, live, qc]); // eslint-disable-line react-hooks/exhaustive-deps
 }
 
 // ============================================================ schedules

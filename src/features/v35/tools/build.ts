@@ -15,8 +15,17 @@ import {
   type AfTenant, type AfTenantKey, type Agent, type AgentFactoryData, type Disablement, type McpServer, type ModelRegistry, type Schedule, type Workflow,
 } from '@/v35/data/agentFactory';
 import { REPORT_SECTIONS, type DeliveryRow, type Report } from '@/v35/data/toolsConfidence';
+import { BACKENDS, fmtTime, HDR_KEEP, HDR_NONE, HDR_SET, TYPE_L, type KapSrvInfo } from './fromKap';
 
 // ============================================================ context
+
+/** Live tenant (KAP): facts the registry types have no field for. */
+export interface LiveTools {
+  /** KAP server facts by server name */
+  info: Record<string, KapSrvInfo>;
+  /** tool names known to KAP in this tenant (hybrid_search + every agent's allowed_tools) */
+  known: string[];
+}
 
 export interface AfBase {
   t: AfTenantKey;
@@ -26,6 +35,8 @@ export interface AfBase {
   D: AfTenant;
   actor: string;
   can: (perm: string, type: ResType, id?: string) => boolean;
+  /** set when the tenant's tools come from KAP */
+  liveTools?: LiveTools;
 }
 
 export type ListFilters = Record<string, string>;
@@ -146,6 +157,24 @@ export interface ToolItem {
 export function toolInv(c: AfBase): ToolItem[] {
   const L: Omit<ToolItem, 'off' | 'pub' | 'dIn' | 'dOut' | 'wfs' | 'stF' | 'calls' | 'err'>[] = [];
   const MC = c.af.mcp;
+  if (c.liveTools) {
+    // KAP: built-in and configuration tools known in the tenant; KAP has no tool catalogue endpoint
+    const nat = new Map(NATIVE_TOOLS.flatMap(([g, svc, rows]) => rows.map(([n, d]) => [n, { g, svc, d }] as const)));
+    const granted = Object.values(MC.grants[c.t] || {}).flat().map(toolKey);
+    // a name a check attributed to a server is listed once, under that server
+    const onSrv = new Set(granted.filter((k) => !k.startsWith('kap:')).map((k) => k.split(':')[1]));
+    const keys = uniq(c.liveTools.known.map((n) => `kap:${n}`).concat(granted)).filter((k) => !(k.startsWith('kap:') && onSrv.has(k.slice(4))));
+    keys.forEach((key) => {
+      const [sv, n] = key.split(':');
+      const s = sv === 'kap' ? undefined : MC.servers.find((x) => x.n === sv && x.own === c.t);
+      if (s) {
+        L.push({ key, n, d: 'Configured for this MCP server; the last KAP check reported it missing', src: 'Tenant MCP', srcL: `Tenant MCP · ${s.n}`, mgr: `${c.tn}-managed`, cap: isExternal(s.up) ? 'External data' : 'Internal data', fx: '—', st: 'Missing on server', why: 'Reported by the KAP connection check', cred: s.auth, io: ['As declared by the MCP server', 'JSON result'], srv: s, cls: '—', pii: '—', en: true });
+        return;
+      }
+      const x = nat.get(n);
+      L.push({ key: `kap:${n}`, n, d: x ? x.d : 'Tool defined in the KAP tenant configuration', src: 'Native', srcL: x ? `Native · ${x.svc}` : 'KAP · tenant configuration', mgr: 'KAP configuration', cap: x ? (x.g === 'Model tasks' ? 'Model task' : x.g) : '—', fx: '—', st: 'Available', why: '', cred: 'KAP', io: NAT_IO[n] || ['As declared by the tool', 'Structured result'], srv: null, cls: '—', pii: '—', en: true });
+    });
+  } else
   NATIVE_TOOLS.forEach(([g, svc, rows]) =>
     rows.forEach(([n, d, req]) => {
       const nm = noModel(c.af.models, c.t, req);
@@ -168,7 +197,7 @@ export function toolInv(c: AfBase): ToolItem[] {
     const dIn = c.D.agents.filter((a) => { const x = draftTools(c, a.id); return !!x && x.includes(t.key) && !pub.includes(a.id); }).map((a) => a.id);
     const dOut = c.D.agents.filter((a) => { const x = draftTools(c, a.id); return !!x && !x.includes(t.key) && pub.includes(a.id); }).map((a) => a.id);
     const wfs = c.D.workflows.filter((w) => pub.concat(dIn).some((a) => wfUsing(c.D, a).some((x) => x.id === w.id)));
-    return { ...t, off, pub, dIn, dOut, wfs, stF: off ? 'Disabled (emergency)' : t.st, calls: CALLS[t.n] || 0, err: t.n === 'EconomicData' ? '20%' : '0%' };
+    return { ...t, off, pub, dIn, dOut, wfs, stF: off ? 'Disabled (emergency)' : t.st, calls: c.liveTools ? 0 : CALLS[t.n] || 0, err: c.liveTools ? '—' : t.n === 'EconomicData' ? '20%' : '0%' };
   });
 }
 
@@ -241,9 +270,9 @@ export function toolsScreen(c: ToolsCtx, F: ListFilters, setF: (f: ListFilters) 
             kv: kv([
               ['Purpose', t.d], ['Capability', t.cap], ['Source', t.srcL], ['Managed by', t.mgr], ['Authentication', t.cred],
               ['Input contract', t.io[0], true], ['Output contract', t.io[1], true],
-              ['Permitted operations', t.fx === 'Read-only' ? 'Read only · no changes in any system' : 'Takes actions · each call is confirmed by the user'],
-              ['Status', t.stF + (t.why ? ` · ${t.why}` : '')], ['Classification ceiling', t.cls], ['Personal data', t.pii], ['Usage · 7 days', `${t.calls} calls · ${t.err} errors`],
-              off ? ['Emergency disable', `${off.by} · ${off.at} · ${off.reason} · ${off.ref}`] : null,
+              ['Permitted operations', t.fx === 'Read-only' ? 'Read only · no changes in any system' : t.fx === '—' ? 'Not declared in KAP' : 'Takes actions · each call is confirmed by the user'],
+              ['Status', t.stF + (t.why ? ` · ${t.why}` : '')], ['Classification ceiling', t.cls], ['Personal data', t.pii], ['Usage · 7 days', c.liveTools ? 'Not reported by KAP' : `${t.calls} calls · ${t.err} errors`],
+              off ? ['Emergency disable', `${off.by} · ${off.at} · ${off.reason} · ${off.ref}${c.liveTools ? ' · this console session only (KAP has no tool disable)' : ''}`] : null,
             ]),
             lists: [
               {
@@ -378,9 +407,11 @@ export const grantLabel = (g: string) => {
 /** native · shared · tenant */
 export const grantKind = (af: AgentFactoryData, g: string): 'nat' | 'sh' | 'tn' => (g.startsWith('kap:') ? 'nat' : af.mcp.servers.find((s) => s.n === g.split(':')[0])?.own === 'platform' ? 'sh' : 'tn');
 /** Can agents in tenant t call this tool right now? */
-export function grantAvail(af: AgentFactoryData, t: string, g: string): boolean {
+export function grantAvail(af: AgentFactoryData, t: string, g: string, live?: boolean): boolean {
   const [sv, tl] = g.split(':');
   if (sv === 'kap') {
+    // KAP accepted the agent's allowed_tools, so its built-in and configuration tools resolve
+    if (live) return true;
     const row = NATIVE_TOOLS.flatMap((x) => x[2]).find((x) => x[0] === tl);
     return !!row && !noModel(af.models, t, row[2]);
   }
@@ -410,9 +441,12 @@ export function mcpScreen(c: McpCtx, F: ListFilters, setF: (f: ListFilters) => v
   const own = fv(F, 'own', OWN[0]), st = fv(F, 'st', ST[0]), net = fv(F, 'net', NET[0]);
   const vis = RW.filter((r) => qOk(F.q, `${r.n} ${r.vendor || ''}`) && (own === OWN[0] || (own === 'Platform-managed' ? r.isPlatS : !r.isPlatS)) && (st === ST[0] || stL(r) === st) && (net === NET[0] || r.kind === net));
 
+  const live = c.liveTools;
   const rows = vis.map((r): Row => {
     const s = r.s;
     const test = c.tests[r.n];
+    const info = live?.info[r.n];
+    if (live && info) return liveMcpRow(c, r, info, test);
     return {
       key: `mc:${r.n}`,
       cells: [
@@ -462,14 +496,16 @@ export function mcpScreen(c: McpCtx, F: ListFilters, setF: (f: ListFilters) => v
   });
 
   // agent tool assignments (prototype mcpScreen `tlt.assign`)
-  const chips = (gs: string[], k: 'nat' | 'sh' | 'tn') => gs.filter((g) => grantKind(c.af, g) === k).map((g) => grantLabel(g) + (grantAvail(c.af, c.t, g) ? '' : ' (unavailable)')).join(', ') || '—';
+  const chips = (gs: string[], k: 'nat' | 'sh' | 'tn') => gs.filter((g) => grantKind(c.af, g) === k).map((g) => grantLabel(g) + (grantAvail(c.af, c.t, g, !!live) ? '' : ' (unavailable)')).join(', ') || '—';
   const agents = c.D.agents.filter((a) => a.st !== 'Archived');
   const assign: Section = {
     title: 'Agent tool assignments',
-    note: 'Published tool grants per agent: native tools, shared MCP servers and tenant MCP servers. Unavailable tools are marked; agents cannot call them.',
+    note: live
+      ? 'Each KAP agent’s allowed_tools. KAP tool names carry no server: a tool is listed under an MCP server only when a connection check reported it missing there (unavailable). Saving changes the agent in KAP.'
+      : 'Published tool grants per agent: native tools, shared MCP servers and tenant MCP servers. Unavailable tools are marked; agents cannot call them.',
     sacts: canGrant ? [act('Grant tools', () => c.a.grant())] : [],
     empty: 'No agents in this tenant.',
-    cols: [`${c.tn} agent`, 'Native tools', 'Shared MCP', 'Tenant MCP servers'],
+    cols: [`${c.tn} agent`, live ? 'Allowed tools (KAP)' : 'Native tools', 'Shared MCP', 'Tenant MCP servers'],
     mode: 'inline',
     rows: agents.map((a): Row => {
       const gs = (c.af.mcp.grants[c.t] || {})[a.id] || [];
@@ -486,6 +522,75 @@ export function mcpScreen(c: McpCtx, F: ListFilters, setF: (f: ListFilters) => v
     filters: filterBar(F, setF, [['own', 'Managed by', OWN], ['st', 'Status', ST], ['net', 'Network', NET]], 'Server name or description', `${vis.length} of ${RW.length} connections`),
     sections: [{ empty: RW.length ? 'No connections match the filters.' : 'No MCP connections yet.', cols: ['Connection', 'Managed by', 'Network', 'Tools enabled', 'Used by', 'Status', 'Health'], rows, openKey }, assign],
   };
+}
+
+/** A KAP server row (live tenant): KAP's fields only; no tool list, no per-tenant tool enablement. */
+function liveMcpRow(c: McpCtx, r: McpRow, i: KapSrvInfo, test?: ConnTest): Row {
+  const s = r.s;
+  const canAdmin = c.can('tenant:configure', 'tenant', '*');
+  const checked = s.health !== 'Not checked';
+  return {
+    key: `mc:${r.n}`,
+    cells: [
+      cell(r.n, { m: true, sub: TYPE_L[i.type] }),
+      cell(c.tn),
+      cell(r.kind),
+      cell('—', { tip: 'KAP does not list the tools of an MCP server; tools are defined in the tenant configuration.' }),
+      cell(r.users.length ? plural(r.users.length, 'agent') : '—', { tip: r.users.length ? '' : 'KAP tool names carry no server, so usage per server is unknown.' }),
+      cell('', { p: i.active ? ['approved', 'Enabled'] : ['draft', 'Deactivated'] }),
+      cell(i.active && checked ? s.health : '—'),
+    ],
+    kv: kv([
+      ['MCP Server URL', s.up, true], ['Transport', TYPE_L[i.type]], ['Headers', i.headers.length ? s.auth.replace(/^Headers: /, '') + ' · values are write-only' : 'None'],
+      ['Verify TLS', i.verifyTls ? 'Yes' : 'No'], ['CA bundle', i.caFile || '—', true], ['Timeout', `${s.timeout} s`], ['Tool retries', s.retries],
+      ['Status', i.active ? 'Active' : 'Deactivated · register the same name again to bring it back'],
+      ['Health', checked ? `${s.health}${s.lastOk !== '—' ? ` · last OK ${s.lastOk}` : ''}${s.note ? ` · ${s.note}` : ''}` : 'Not checked in this session'],
+      test ? ['Connection test', test.s === 'busy' ? 'Checking connection…' : test.m] : null,
+      ['Created', fmtTime(i.created)], ['Last change', fmtTime(i.updated)], ['KAP id', i.id, true],
+    ]),
+    keepKv: true,
+    lists: [
+      { title: 'Discovered tools', items: [], empty: 'KAP does not list a server’s tools. They are defined in the tenant configuration; a connection check names configured tools the server no longer offers.' },
+      { title: 'Used by', items: r.users.map((a) => ({ a, b: 'Agent', c: 'tool reported missing here', x: () => c.go.agent(a, 'knowledge'), xl: 'Open agent' })), empty: 'Unknown: KAP tool names carry no server. See the agents’ allowed tools below.' },
+    ],
+    acts: [
+      act('Test connection', () => c.a.test(r.n)),
+      ...(canAdmin ? [act('Configure', () => c.a.configure(r.n)), i.active ? act('Deactivate', () => c.a.toggle(r), 'ghost') : act('Reactivate', () => c.a.toggle(r))] : []),
+    ],
+  };
+}
+
+/** Register / configure form for a KAP MCP server (live tenant): KAP's fields only. */
+export function kapServerFields(step: number, v: FormValues, isEdit: boolean, headerNames: string[] = []): FormField[] {
+  if (step === 0) {
+    const hdrModes = isEdit ? (headerNames.length ? [HDR_KEEP, HDR_SET, HDR_NONE] : [HDR_SET]) : [HDR_SET];
+    return [
+      isEdit ? { type: 'text', k: 'n', label: 'Name', ro: true, hint: 'Renaming is not offered: KAP rejects it while tools reference the server.' } : { type: 'text', k: 'n', label: 'Name', ph: 'e.g. hr_directory', hint: '4–32 letters, digits or underscores. Unique in the tenant.' },
+      isEdit ? { type: 'text', k: 'type', label: 'Transport', ro: true, hint: 'KAP does not change the transport of a server.' } : { type: 'select', k: 'type', label: 'Transport', opts: [TYPE_L.streamable_http, TYPE_L.sse] },
+      { type: 'text', k: 'up', label: 'MCP Server URL', ph: 'https://…/mcp', hint: 'Private hosts must be on KAP’s OUTBOUND_PRIVATE_ALLOWLIST (SSRF guard), or KAP refuses to connect.' },
+      ...(isEdit && hdrModes.length > 1 ? [{ type: 'select', k: 'hdrMode', label: 'Headers', opts: hdrModes, hint: `Current: ${headerNames.join(', ')}. Values are write-only; a new set replaces all headers.` } as FormField] : []),
+      ...(v.hdrMode === HDR_SET
+        ? [
+            { type: 'text', k: 'hdr', label: 'Header name', ph: 'Authorization' } as FormField,
+            { type: 'select', k: 'sbk', label: 'Secret backend', opts: BACKENDS } as FormField,
+            { type: 'text', k: 'sid', label: 'Secret ID', ph: '00000000-0000-0000-0000-000000000000', hint: 'UUID of a secret version already stored in the Secret Provider. Leave empty for no header.' } as FormField,
+            { type: 'text', k: 'sver', label: 'Secret version' } as FormField,
+          ]
+        : []),
+    ];
+  }
+  if (step === 1)
+    return [
+      { type: 'num', k: 'timeout', label: 'Timeout (s)', hint: '1 to 1024. KAP default 60.' },
+      { type: 'select', k: 'retries', label: 'Tool retries', opts: ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10'] },
+      { type: 'select', k: 'tls', label: 'Verify TLS certificate', opts: ['Yes', 'No'] },
+      { type: 'text', k: 'ca', label: 'CA bundle path', ph: 'optional, on the KAP host', hint: 'Path to a trusted-certificate bundle for this server.' },
+      { type: 'note', tone: 'info', text: 'Classification ceiling, personal data, side effects, egress allowlist and rate limits are not KAP fields; KAP does not store them.' },
+    ];
+  return [
+    { type: 'kv', label: 'Review', rows: [['Name', v.n], ['Transport', v.type], ['URL', v.up], ['Headers', v.hdrMode === HDR_SET ? (String(v.sid || '').trim() ? `${v.hdr} · secret ${v.sid} v${v.sver} (${v.sbk})` : 'None') : v.hdrMode === HDR_NONE ? 'Remove all' : 'Unchanged'], ['Timeout', `${v.timeout} s`], ['Tool retries', v.retries], ['Verify TLS', v.tls], ['CA bundle', v.ca || '—']] },
+    { type: 'note', text: isEdit ? 'Saved in KAP; the next agent run uses the change. The console then checks the connection.' : 'Registered in KAP, then checked (POST …/check). KAP does not list the server’s tools: add tool names to an agent’s allowed tools once the tenant configuration defines them.' },
+  ];
 }
 
 /** Simulated connection check (prototype `sim`). */
