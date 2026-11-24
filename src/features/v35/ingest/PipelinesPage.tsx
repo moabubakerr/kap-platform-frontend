@@ -1,6 +1,13 @@
-import Porting from '@/features/v35/Porting';
+import * as React from 'react';
+import { useCrumbs } from '@/app/shell/crumbs';
+import { ScreenView } from '@/engine/ScreenView';
+import { pipesScreen, type ListFilters } from './build';
+import { useIngest } from './useIngest';
 
-/** Placeholder until the hub is ported. */
+/** Data Ingestion Hub · Ingestion Pipelines (route /pipelines). */
 export default function PipelinesPage() {
-  return <Porting />;
+  const c = useIngest();
+  const [f, setF] = React.useState<ListFilters>({});
+  useCrumbs([]);
+  return <ScreenView model={pipesScreen(c, f, setF)} />;
 }

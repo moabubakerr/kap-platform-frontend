@@ -1,6 +1,13 @@
-import Porting from '@/features/v35/Porting';
+import * as React from 'react';
+import { useCrumbs } from '@/app/shell/crumbs';
+import { ScreenView } from '@/engine/ScreenView';
+import { sourcesScreen, type ListFilters } from './build';
+import { useIngest } from './useIngest';
 
-/** Placeholder until the hub is ported. */
+/** Data Ingestion Hub · Data Sources (route /sources). */
 export default function SourcesPage() {
-  return <Porting />;
+  const c = useIngest();
+  const [f, setF] = React.useState<ListFilters>({});
+  useCrumbs([]);
+  return <ScreenView model={sourcesScreen(c, f, setF)} />;
 }
