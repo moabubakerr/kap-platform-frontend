@@ -15,7 +15,7 @@ services:
     ports:
       - "127.0.0.1:17100:8080"
     environment:
-      PLATFORM_UPSTREAM: ${PLATFORM_UPSTREAM:-http://platform-api:8080}
+      PLATFORM_UPSTREAM: http://platform-api:8080   # fixed: .env values are for the dev server
       PLATFORM_API_KEY: ${PLATFORM_API_KEY:?set PLATFORM_API_KEY in .env}
       # KAP's API is on the same Docker network as its container name (not the
       # host loopback); Ask AI is not deployed on this stand yet.
