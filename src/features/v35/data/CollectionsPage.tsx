@@ -1,10 +1,10 @@
-import { ScreenView } from '@/engine/ScreenView';
 import { collectionsScreen } from './build';
-import { NoBusinessData, useDataHub } from './useDataHub';
+import { liveCollectionsScreen } from './liveBuild';
+import { DataScreen, NoBusinessData, useDataHub } from './useDataHub';
 
-/** Business Data Hub · Collections (route /collections). */
+/** Business Data Hub · Collections (route /collections). Live tenant: collections from KAP. */
 export default function CollectionsPage() {
   const h = useDataHub();
   if (!h) return <NoBusinessData title="Collections" />;
-  return <ScreenView model={collectionsScreen(h)} />;
+  return <DataScreen live={h.status} what="collections" model={h.live ? liveCollectionsScreen(h) : collectionsScreen(h)} />;
 }

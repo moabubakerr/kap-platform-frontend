@@ -82,7 +82,7 @@ describe('collections', () => {
   it('creates a collection through the form and validates the name', () => {
     const h = hub('sceai_admin', 'sceai');
     let save: ((v: Record<string, unknown>) => string) | null = null;
-    h.ui.form = (_t, _f, _s, fn) => { save = fn; };
+    h.ui.form = (_t, _f, _s, fn) => { save = fn as (v: Record<string, unknown>) => string; };
     collectionsScreen(h).head.add!.f();
     expect(save!({ id: 'X' })).toBe('Use 3–40 lower-case letters, digits and underscores.');
     expect(save!({ id: 'sceai_articles' })).toBe('A collection with this name exists.');

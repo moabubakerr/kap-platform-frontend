@@ -5,21 +5,22 @@
  * UI callbacks (navigate, dialogs, store updates) come in through `Hub`.
  */
 import { act, cell, fr, kv } from '@/engine/build';
-import type { FormField, FormValues } from '@/engine/dialogs';
+import type { FormField, FormValues, SaveResult } from '@/engine/dialogs';
 import type { Action, DiagramEdge, DiagramSpec, DsStatus, Filters, PageHead, Row, ScreenModel, Section } from '@/engine/types';
 import { BUILTIN_ROLES, type IamData, type IamGrant, type IamPolicy } from '@/v35/iam';
 import {
   AGENT_ENTITY_CONTEXT, blockingPolicies, dayAgo, policiesOf, TENANT_AGENTS, TENANT_NAME,
   type BusinessData, type DataTenant, type DhCollection, type DhDataset, type DhDocument, type DhSearch, type EntityInst, type IngestRef, type OntoType, type TenantData,
 } from '@/v35/data/businessData';
-import { UD_DEFAULT, type UdFilters } from './session';
+import type { CollectionForm, KapCache } from './fromKap';
+import { UD_DEFAULT, type LivePage, type UdFilters } from './session';
 
 // ------------------------------------------------------------------ context
 export interface DataUi {
   /** navigate, relative to the tenant base (e.g. `collections/x/access`) */
   go: (path: string) => void;
-  form: (title: string, fields: FormField[], saveL: string, save: (v: FormValues) => string) => void;
-  confirm: (title: string, body: string, items: { a: string; b?: string; c?: string }[], cta: string, fn: () => void) => void;
+  form: (title: string, fields: FormField[], saveL: string, save: (v: FormValues) => SaveResult) => void;
+  confirm: (title: string, body: string, items: { a: string; b?: string; c?: string }[], cta: string, fn: () => void | Promise<void | string>) => void;
   toast: (msg: string) => void;
   /** change this tenant's business data (draft), then show `toast` */
   setD: (fn: (d: TenantData, all: BusinessData) => void, toast: string) => void;
@@ -51,6 +52,32 @@ export interface Hub {
   /** user shown in "Effective access" */
   effU: string;
   setEffU: (uid: string) => void;
+  /** live tenant: data comes from KAP and writes go to KAP (`liveBuild.ts`) */
+  live?: LiveHub | null;
+}
+
+/** What a live tenant's screens need beyond the mapped data: KAP records, paging and KAP writes. */
+export interface LiveHub {
+  cache: KapCache;
+  /** collections each KAP agent uses (by name) */
+  agColl: Record<string, string[]>;
+  /** page of a collection's files (Data Scope) */
+  filesAt: (collection: string) => LivePage;
+  setFilesAt: (collection: string, v: LivePage) => void;
+  /** page and status filter of a dataset's observations */
+  obsAt: (dataset: string) => LivePage & { status: string };
+  setObsAt: (dataset: string, v: LivePage & { status: string }) => void;
+  createCollection: (v: CollectionForm) => Promise<string>;
+  updateCollection: (name: string, v: CollectionForm) => Promise<string>;
+  deleteCollection: (name: string) => Promise<string>;
+  reprocessFile: (docId: string) => Promise<string>;
+  deleteFile: (docId: string) => Promise<string>;
+  /** the file's content through the platform (a link to `kapUrl`) */
+  download: (docId: string) => void;
+  correctObservation: (dataset: string, obsId: string, v: { value?: string; status?: string; reason?: string }) => Promise<string>;
+  createEntityType: (v: { n?: string; d?: string; idn?: string; idt?: string }) => Promise<string>;
+  updateEntityType: (name: string, body: { description?: string; schema?: Record<string, unknown> }, what: string) => Promise<string>;
+  deleteEntityType: (name: string) => Promise<string>;
 }
 
 const enc = encodeURIComponent;
@@ -71,7 +98,9 @@ export function derive(h: Hub) {
   const collsOfDoc = (id: string) => D.collections.filter((c) => c.docs.includes(id)).map((c) => c.id);
   const visDs = (id: string) => (acc.canData || collsOfDs(id).some(acc.canRead)) && ownOk(`dataset:${id}`);
   const visDoc = (id: string) => (acc.canData || collsOfDoc(id).some(acc.canRead)) && ownOk(`document:${id}`);
-  const agentsOf = (c: string) => TENANT_AGENTS[T].filter((a) => (h.all.agColl[a] ?? []).includes(c));
+  // live tenant: agents and their collections come from KAP (AgentOut.collections)
+  const agColl = h.live ? h.live.agColl : h.all.agColl;
+  const agentsOf = (c: string) => (h.live ? Object.keys(agColl).sort() : TENANT_AGENTS[T]).filter((a) => (agColl[a] ?? []).includes(c));
   const instVis = (x: EntityInst) => x.src.some(([k, id]) => (k === 'dataset' ? visDs(id) : visDoc(id)));
   const instOf = (kind: 'dataset' | 'document', id: string) => D.inst.filter((x) => instVis(x) && x.src.some(([k, i]) => k === kind && i === id));
   // provenance from the Data Ingestion Hub: latest run that published the asset, its pipeline and data source
@@ -101,17 +130,17 @@ export function derive(h: Hub) {
   return { myGs, polOf, polN, ownOk, label, collsOfDs, collsOfDoc, visDs, visDoc, agentsOf, instVis, instOf, provOf, metaOf, provRows };
 }
 
-const procPill = (d: DhDocument): [DsStatus, string] => (d.ex === 'Failed' ? ['rejected', 'Extraction failed'] : d.idx === 'Indexed' ? ['approved', 'Indexed'] : d.idx === 'Re-indexing' ? ['submitted', 'Re-indexing'] : ['draft', d.idx]);
+export const procPill = (d: DhDocument): [DsStatus, string] => (d.ex === 'Failed' ? ['rejected', 'Extraction failed'] : d.idx === 'Indexed' ? ['approved', 'Indexed'] : d.idx === 'Re-indexing' ? ['submitted', 'Re-indexing'] : ['draft', d.idx]);
 const pstP = (s: string): [DsStatus, string] => (({ Completed: ['approved', 'Completed'], Failed: ['rejected', 'Failed'], Processing: ['submitted', 'Processing'], Pending: ['draft', 'Pending'] }) as Record<string, [DsStatus, string]>)[s] ?? ['draft', s];
 export const entP = (d: Pick<DhDocument, 'entSt' | 'entN'>): [DsStatus, string] =>
-  d.entSt === 'Completed' ? ['approved', plural(d.entN, 'entity', 'entities')] : d.entSt === 'Failed' ? ['rejected', 'Failed'] : d.entSt === 'No entities found' ? ['draft', 'None found'] : ['draft', 'Not processed'];
-const dsPill = (d: DhDataset): [DsStatus, string] => (d.st === 'Ingested' ? ['approved', 'Ingested'] : ['submitted', d.st]);
+  d.entSt === 'Completed' ? ['approved', plural(d.entN, 'entity', 'entities')] : d.entSt === 'Failed' ? ['rejected', 'Failed'] : d.entSt === 'No entities found' ? ['draft', 'None found'] : d.entSt === '—' ? ['draft', '—'] : ['draft', 'Not processed'];
+export const dsPill = (d: DhDataset): [DsStatus, string] => (d.st === 'Ingested' ? ['approved', 'Ingested'] : ['submitted', d.st]);
 
-function denied(h: Hub, what: string, title: string): ScreenModel {
+export function denied(h: Hub, what: string, title: string): ScreenModel {
   return { head: { title }, sections: [], denied: `You don't have access to this ${what}. Ask a ${TENANT_NAME[h.t]} tenant administrator if you need access.` };
 }
 
-const openRow = (key: string, cells: Row['cells'], open: () => void, more: Action[] = []): Row => ({ key, cells, acts: [act('Open', open), ...more], onClick: open });
+export const openRow = (key: string, cells: Row['cells'], open: () => void, more: Action[] = []): Row => ({ key, cells, acts: [act('Open', open), ...more], onClick: open });
 
 // ================================================================== COLLECTIONS
 export function collectionsScreen(h: Hub): ScreenModel {
@@ -1123,8 +1152,10 @@ export function ontologyMap(h: Hub, sel0: string | null, setSel: (t: string | nu
   const t0 = TY.find((t) => t.n === selT);
   const relsOf = (n: string) => RL.filter((r) => r.src === n || r.tgt === n);
   const pipesOf = (n: string) => h.ing.pipelines.filter((p) => (p.entTypes ?? []).includes(n)).map((p) => p.id);
+  // KAP does not report how many entities were extracted
+  const cnt = (t: OntoType) => (h.live ? '—' : fmt(t.cnt));
   return {
-    nodes: TY.map((t, i) => ({ id: `ty:${t.n}`, x: Math.round(pos[i].x), y: Math.round(pos[i].y), w: 170, h: 52, l1: t.n, l2: `${t.attrs.length} attributes · ${fmt(t.cnt)} extracted`, tone: selT === t.n ? 'brand' : 'base', sel: selT === t.n, click: () => setSel(selT === t.n ? null : t.n) })),
+    nodes: TY.map((t, i) => ({ id: `ty:${t.n}`, x: Math.round(pos[i].x), y: Math.round(pos[i].y), w: 170, h: 52, l1: t.n, l2: `${t.attrs.length} attributes${h.live ? '' : ` · ${cnt(t)} extracted`}`, tone: selT === t.n ? 'brand' : 'base', sel: selT === t.n, click: () => setSel(selT === t.n ? null : t.n) })),
     edges,
     legend: [['Entity type', 'base'], ['Selected', 'brand'], ...(RL.some((r) => r.dir === 'Bidirectional') ? ([['Dashed line: bidirectional relationship', 'ref']] as [string, 'ref'][]) : [])],
     inspect: t0
@@ -1133,7 +1164,7 @@ export function ontologyMap(h: Hub, sel0: string | null, setSel: (t: string | nu
           ['Identifier', t0.attrs.find((a) => a.id)?.n],
           ['Attributes', t0.attrs.map((a) => `${a.n} (${a.ty})`).join(', ')],
           ['Relationships', relsOf(t0.n).map((r) => `${r.src} ${r.n} ${r.tgt}`).join('; ') || 'None'],
-          ['Extracted', `${fmt(t0.cnt)} entities`],
+          ['Extracted', h.live ? '— (KAP does not report it)' : `${cnt(t0)} entities`],
           ['Extracted by', pipesOf(t0.n).join(', ') || 'No pipeline'],
         ]
       : [],

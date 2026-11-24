@@ -1,12 +1,14 @@
 import * as React from 'react';
-import { ScreenView } from '@/engine/ScreenView';
 import { documentResults, documentsScreen } from './build';
+import { liveDocumentsScreen } from './liveBuild';
+import { combineLive, useLiveDocs } from './liveData';
 import { dataSession, UD_DEFAULT, type UdFilters } from './session';
-import { NoBusinessData, useDataHub } from './useDataHub';
+import { DataScreen, NoBusinessData, useDataHub } from './useDataHub';
 
-/** Business Data Hub · Unstructured Data (route /unstructured). Filters persist per tenant for the session. */
+/** Business Data Hub · Unstructured Data (route /unstructured). Filters persist per tenant for the session. Live tenant: files of KAP's document collections. */
 export default function DocumentsPage() {
   const h = useDataHub();
+  const docs = useLiveDocs(h?.t);
   const sess = dataSession.use();
   const t = h?.t ?? '';
   const F: UdFilters = { ...UD_DEFAULT, ...(sess.udF[t] ?? {}) };
@@ -23,5 +25,5 @@ export default function DocumentsPage() {
   }, [t, idsKey]);
 
   if (!h) return <NoBusinessData title="Unstructured Data" />;
-  return <ScreenView model={documentsScreen(h, F, setF)} />;
+  return <DataScreen live={combineLive(h.status, docs)} what="documents" model={h.live ? liveDocumentsScreen(h, F, setF) : documentsScreen(h, F, setF)} />;
 }

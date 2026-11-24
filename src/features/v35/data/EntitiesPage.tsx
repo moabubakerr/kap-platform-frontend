@@ -1,13 +1,14 @@
 import * as React from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useCrumbs } from '@/app/shell/crumbs';
-import { ScreenView } from '@/engine/ScreenView';
-import { ENTITY_TABS, entitiesScreen } from './build';
-import { NoBusinessData, useDataHub } from './useDataHub';
+import { ENTITY_TABS, entitiesScreen, type EntitiesView } from './build';
+import { liveEntitiesScreen } from './liveBuild';
+import { DataScreen, NoBusinessData, useDataHub } from './useDataHub';
 
 /**
  * Business Entities · tenant ontology (route /entities?tab=…&type=…):
  * Entity Types · Relationship Types · Ontology Map · Extracted Entities · Agent Usage.
+ * Live tenant: entity types from KAP; relationship types stay session-only.
  */
 export default function EntitiesPage() {
   const h = useDataHub();
@@ -24,16 +25,13 @@ export default function EntitiesPage() {
       return n;
     });
   if (!h) return <NoBusinessData title="Business Entities" />;
-  return (
-    <ScreenView
-      model={entitiesScreen(h, {
-        tab,
-        setTab: (v) => setSp(v === 'types' ? {} : { tab: v }),
-        type,
-        setType: (v) => setParam('type', v, 'All types'),
-        sel,
-        setSel,
-      })}
-    />
-  );
+  const view: EntitiesView = {
+    tab,
+    setTab: (v) => setSp(v === 'types' ? {} : { tab: v }),
+    type,
+    setType: (v) => setParam('type', v, 'All types'),
+    sel,
+    setSel,
+  };
+  return <DataScreen live={h.status} what="entity types" model={h.live ? liveEntitiesScreen(h, view) : entitiesScreen(h, view)} />;
 }
