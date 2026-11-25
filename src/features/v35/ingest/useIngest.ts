@@ -12,15 +12,15 @@ import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import { useBase, useScope } from '@/app/shell/AppShell';
 import { useDialogs, type FormField } from '@/engine/dialogs';
-import { kap } from '@/api/kap';
+import { kap, kapGet, type KapPage } from '@/api/kap';
 import { useAccess } from '@/v35/access';
 import { recordAudit } from '@/v35/data/audit';
 import { liveSave, liveTenantId, useLiveLoad, type Live } from '@/v35/live';
 import { ingestStore, isIngestTenant, type IngestTenant, type IngestTenantKey, type Pipeline, type Run, type Source } from '@/v35/data/ingest';
 import type { IngestCtx } from './build';
 import {
-  checkMessage, isSess, kapOfPipe, kapOfRun, kapOfSource, runId, toKapConnectorCreate, toKapConnectorPatch, toKapPipelineCreate, toKapPipelinePatch, toKapPipelineRestore, toKapRun,
-  type KapConnectorCheck, type KapIngest,
+  checkMessage, isActiveJob, isSess, kapOfPipe, kapOfRun, kapOfSource, runId, toKapConnectorCreate, toKapConnectorPatch, toKapPipelineCreate, toKapPipelinePatch, toKapPipelineRestore, toKapRun,
+  type KapConnectorCheck, type KapIngest, type KapJob,
 } from './fromKap';
 import { markConsoleRun } from './consoleRuns';
 import { ACTIVE_REFRESH_MS, ensureJobDetail, hasActiveRun, liveIngestStore, loadIngest, setCheck } from './liveIngest';
@@ -202,13 +202,27 @@ export function useIngest(): IngestCtx & { tenant: IngestTenantKey | null; liveS
         const c = colls.find((x) => x.name === collName)!;
         const cid = connName && connName !== 'All connectors' ? kapNow()?.conns.find((x) => x.name === connName)?.id ?? null : connectorId ?? null;
         let job = '';
+        let joined = '';
         return liveSave(live, async () => {
+          // a data source scan already processing this collection does the work: show it instead of
+          // starting a run that would find nothing (seen on the stand, 25 Nov 2026)
+          const recent = await kapGet<KapPage<KapJob>>(tid, `pipelines/${p.id}/jobs`, { collection_id: c.id, sort: '-created_at', limit: 5 }).catch(() => null);
+          const busy = recent?.items.find((x) => isActiveJob(x) && (!cid || x.connector_id === cid));
+          if (busy) {
+            joined = busy.id;
+            return;
+          }
           const r = await kap<{ id: string }>(tid, 'POST', `pipelines/${p.id}/run`, toKapRun(c.id, cid));
           job = r?.id ?? '';
           // KAP records no trigger: remember the runs this console started (before the reload maps them)
           markConsoleRun(job);
         }).then((e) => {
           if (e) return e;
+          if (joined) {
+            d.toast(`A run of ${collName} is already in progress (${runId(joined)}), so no new run was started. Showing it.`);
+            window.setTimeout(() => go.run(runId(joined)), 0);
+            return '';
+          }
           audit('Ran pipeline', `${pid} · collection ${collName}${cid ? ` · connector ${connName}` : ''}${job ? ` · job ${job}` : ''}`);
           d.toast(`Run ${job ? runId(job) : ''} registered for ${collName}. KAP starts it when a worker is free; its steps are shown live.`);
           if (job) window.setTimeout(() => go.run(runId(job)), 0);

@@ -333,6 +333,36 @@ export function laterRuns(j: Pick<KapJob, 'id' | 'collection_id' | 'created_at'>
   return jobs.filter((x) => x.id !== j.id && x.collection_id === j.collection_id && ms(x.created_at) >= from).sort((a, b) => ms(a.created_at) - ms(b.created_at));
 }
 
+/**
+ * A data source scan that found nothing. KAP registers a run for every scan of
+ * every collection (every 3 minutes for a PT3M connector), so most runs are
+ * these. Lists hide them by default; they carry no information.
+ */
+export function isEmptyScan(j: Pick<KapJob, 'connector_id' | 'state' | 'progress' | 'result'>, ours: boolean): boolean {
+  return !ours && !!j.connector_id && isZeroRun(j);
+}
+
+/** Runs with consecutive empty scans folded into one entry ("3 scans found nothing new, 12:12–12:18"). */
+export type RunGroup = { kind: 'run'; job: KapJob } | { kind: 'empty'; jobs: KapJob[] };
+export function foldEmptyScans(jobs: KapJob[], ours: (id: string) => boolean): RunGroup[] {
+  const out: RunGroup[] = [];
+  for (const j of jobs) {
+    const prev = out[out.length - 1];
+    if (isEmptyScan(j, ours(j.id))) {
+      if (prev?.kind === 'empty') prev.jobs.push(j);
+      else out.push({ kind: 'empty', jobs: [j] });
+    } else out.push({ kind: 'run', job: j });
+  }
+  return out;
+}
+
+/** "3 scans of qa_s3 found nothing new (12:12–12:18)". */
+export function emptyScansLabel(jobs: KapJob[], connName: string): string {
+  const times = jobs.map((j) => hhmm(j.created_at));
+  const span = times.length > 1 ? `${[...times].sort()[0]}–${[...times].sort()[times.length - 1]}` : times[0];
+  return `${jobs.length === 1 ? 'Scan' : `${jobs.length} scans`} of ${connName || 'the data source'} found nothing new (${span})`;
+}
+
 /** Split related runs into those started before this run and those after. */
 export function splitRelated(j: Pick<KapJob, 'created_at'>, related: KapJob[]): { before: KapJob[]; after: KapJob[] } {
   const t = ms(j.created_at);

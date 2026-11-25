@@ -11,8 +11,8 @@ import type { Run, RunStatus } from '@/v35/data/ingest';
 import type { IngestNav } from './build';
 import { kapOfRun, runId, type KapCollection, type KapConnector, type KapJob, type KapPipeline } from './fromKap';
 import {
-  earlierWork, followUp, hhmm, hhmmss, isZeroRun, progressOf, runDuration, runFiles, runItems, runSteps, splitRelated, triggerOf, zeroExplanation,
-  type FollowUp, type KapFileItem, type RunStep, type StepState,
+  earlierWork, emptyScansLabel, foldEmptyScans, followUp, isEmptyScan, hhmm, hhmmss, isZeroRun, progressOf, runDuration, runFiles, runItems, runSteps, splitRelated, triggerOf, zeroExplanation,
+  type FollowUp, type KapFileItem, type RunGroup, type RunStep, type StepState,
 } from './runView';
 
 // ------------------------------------------------------------------ small parts
@@ -251,7 +251,10 @@ function WhatNext({ D, srcs }: { D: LiveRunData; srcs: { name: string; interval:
   const later = D.later;
   const rel = later ? splitRelated(D.job, later) : { before: [], after: [] };
   const fs = rel.after.map((x) => followUp(x, connName(D, x.connector_id), D.ours(x.id)));
-  const before = rel.before.map((x) => followUp(x, connName(D, x.connector_id), D.ours(x.id)));
+  const before = foldEmptyScans(rel.before, D.ours);
+  const after = foldEmptyScans(rel.after, D.ours);
+  const row = (g: RunGroup) =>
+    g.kind === 'run' ? <FollowRow key={g.job.id} f={followUp(g.job, connName(D, g.job.connector_id), D.ours(g.job.id))} D={D} /> : <EmptyScansRow key={g.jobs[0].id} jobs={g.jobs} name={connName(D, g.jobs[0].connector_id)} />;
   const scanNames = srcs.map((s) => s.name).join(' or ') || 'the data source';
   return (
     <div className="card px-4 py-4">
@@ -261,28 +264,33 @@ function WhatNext({ D, srcs }: { D: LiveRunData; srcs: { name: string; interval:
         <>
           <div className="mb-1.5 text-[12px] font-semibold uppercase tracking-wide text-ink-muted">Just before</div>
           <ul className="mb-3 flex flex-col gap-2">
-            {before.map((f) => (
-              <FollowRow key={f.job.id} f={f} D={D} />
-            ))}
+            {before.map(row)}
           </ul>
         </>
       )}
       <div className="mb-1.5 text-[12px] font-semibold uppercase tracking-wide text-ink-muted">After</div>
       <ul className="flex flex-col gap-2">
-        {fs.map((f) => (
-          <FollowRow key={f.job.id} f={f} D={D} />
-        ))}
+        {after.map(row)}
         {later === undefined || later === null ? (
           <li className="flex items-center gap-2 text-[13.5px] text-ink-muted">
             <Loader2 size={16} className="animate-spin" /> Checking for later runs…
           </li>
-        ) : !fs.some((f) => f.job.connector_id) ? (
+        ) : !fs.some((f) => f.job.connector_id && !isEmptyScan(f.job, D.ours(f.job.id))) ? (
           <li className="flex items-center gap-2 text-[13.5px] text-ink-muted">
             <Loader2 size={16} className="animate-spin text-info" /> Waiting for the next scan of {scanNames}…
           </li>
         ) : null}
       </ul>
     </div>
+  );
+}
+
+function EmptyScansRow({ jobs, name }: { jobs: KapJob[]; name: string }) {
+  return (
+    <li className="flex flex-wrap items-center gap-2 text-[13px] text-ink-muted">
+      <MinusCircle size={16} className="text-ink-subtle" />
+      {emptyScansLabel(jobs, name)}
+    </li>
   );
 }
 

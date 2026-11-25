@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { toRun, type KapJob, type KapPipeline } from './fromKap';
 import {
-  failedStep, followUp, hhmm, intervalWords, isZeroRun, laterRuns, earlierWork, splitRelated, progressOf, runFiles, runItems, runSteps, stageSteps, triggerOf, zeroExplanation,
-  TRIGGER_CONSOLE, TRIGGER_OUTSIDE, type KapFileItem,
+  failedStep, followUp, hhmm, intervalWords, isZeroRun, laterRuns, earlierWork, splitRelated, isEmptyScan, foldEmptyScans, emptyScansLabel, progressOf, runFiles, runItems, runSteps, stageSteps, triggerOf, zeroExplanation,
+  TRIGGER_CONSOLE, TRIGGER_OUTSIDE, type KapFileItem, type RunGroup,
 } from './runView';
 
 const NOW = Date.parse('2026-11-25T11:40:00Z');
@@ -192,5 +192,28 @@ describe('processed items', () => {
       ['Embed · transformed', 'run', 'qa_docs:c.pdf'],
     ]);
     expect(runItems([file('r.csv', 'loaded', at('11:36:00'))], indPipe, 'ind')[0]).toMatchObject({ result: 'Processed', docId: null });
+  });
+});
+
+describe('empty scans', () => {
+  // 25 Nov 2026 on the stand: one upload, then a scan run every 3 minutes for qa_docs
+  const S = (id: string, t: string, n = 0) =>
+    job({ id: `${id}-0000-0000-0000-000000000001`, connector_id: CONN, created_at: at(t), progress: { total: n, completed: n, percent: n ? 100 : null }, result: { succeeded: n, failed: 0, cancelled: 0 } });
+  const real = S('4d37de26', '12:09:02', 3);
+  const manual = job({ id: '8415ebba-0000-0000-0000-000000000001', created_at: at('12:09:17') });
+  const e1 = S('87bc5a04', '12:12:02'), e2 = S('471cf670', '12:15:02'), e3 = S('627cf39b', '12:18:02');
+  const ours = (id: string) => id.startsWith('8415ebba');
+
+  it('treats scans that found nothing as noise, but not console runs or scans that worked', () => {
+    expect(isEmptyScan(e1, false)).toBe(true);
+    expect(isEmptyScan(real, false)).toBe(false);
+    expect(isEmptyScan(manual, true)).toBe(false);
+  });
+
+  it('folds consecutive empty scans into one entry', () => {
+    const g = foldEmptyScans([real, manual, e1, e2, e3], ours);
+    expect(g.map((x) => (x.kind === 'run' ? x.job.id.slice(0, 8) : `${x.jobs.length} empty`))).toEqual(['4d37de26', '8415ebba', '3 empty']);
+    const folded = g[2] as Extract<RunGroup, { kind: 'empty' }>;
+    expect(emptyScansLabel(folded.jobs, 'qa_s3')).toBe(`3 scans of qa_s3 found nothing new (${hhmm(e1.created_at)}–${hhmm(e3.created_at)})`);
   });
 });
