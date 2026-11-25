@@ -474,7 +474,7 @@ export function toIngestTenant(K: KapIngest, prev: IngestTenant | undefined, now
 export const NAME_RX_KAP = /^[a-zA-Z0-9_]{4,32}$/;
 export const PIPE_NAME_RX_KAP = /^[a-zA-Z0-9_]{4,64}$/;
 export const UUID_RX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-export const INTERVALS = ['PT3M', 'PT15M', 'PT1H', 'PT6H', 'P1D'];
+export const INTERVALS = ['PT1M', 'PT3M', 'PT5M', 'PT15M', 'PT30M', 'PT1H', 'PT6H', 'P1D'];
 /** File types KAP pipelines can read (OpenAPI `SupportedFileExtension`). */
 export const KAP_EXTS = ['csv', 'pdf', 'doc', 'docx', 'xls', 'xlsx', 'jpeg', 'jpg', 'png', 'tiff', 'tif', 'wav', 'mp3', 'mp4', 'zip'];
 /** Extensions named in include patterns that KAP cannot read (e.g. `**\/*.txt` → ['txt']). */
