@@ -77,6 +77,8 @@ export interface Trace {
   };
   rawLines: string[];
   logs: TraceLog[];
+  /** live traces: whether the answer rests on data the tools returned */
+  grounding?: { tone: 'ok' | 'warn' | 'bad'; text: string };
 }
 
 export const SPAN_COLOR: Record<SpanSource, string> = {

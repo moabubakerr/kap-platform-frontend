@@ -122,6 +122,33 @@ export async function submitJob(tenantId: string, agentId: string, body: { user_
   return data;
 }
 
+/** A tool output with nothing in it: null, "", whitespace, [] or {} (also as JSON text). */
+export function isEmptyOutput(o: unknown): boolean {
+  if (o == null) return true;
+  if (typeof o === 'string') {
+    const s = o.replace(/\s+/g, '');
+    return s === '' || s === 'null' || s === '[]' || s === '{}' || s === '""';
+  }
+  if (Array.isArray(o)) return o.length === 0;
+  if (typeof o === 'object') return Object.keys(o as object).length === 0;
+  return false;
+}
+
+/**
+ * Does the answer rest on data the tools returned? A succeeded run whose
+ * searches all came back empty answered from the model alone, which is how a
+ * wrong answer reads as confident (seen on the stand, 25 Nov 2026: an invented
+ * "control phrase" after hybrid_search returned nothing).
+ */
+export function grounding(status: string, spans: Pick<TraceSpan, 'kind' | 'output' | 'error' | 'state'>[]): { tone: 'ok' | 'warn' | 'bad'; text: string } | undefined {
+  if (status !== 'succeeded') return undefined;
+  const tools = spans.filter((s) => s.kind === 'Tool');
+  if (!tools.length) return { tone: 'warn', text: 'No data tool was called: the answer comes from the model alone.' };
+  const useful = tools.filter((s) => !s.error && s.state !== 'error' && !isEmptyOutput(s.output));
+  if (!useful.length) return { tone: 'bad', text: `Not backed by data: ${tools.length === 1 ? 'the only tool call' : `all ${tools.length} tool calls`} returned nothing, so the answer comes from the model alone. Treat it as unverified.` };
+  return { tone: 'ok', text: `Backed by ${useful.length} of ${tools.length} tool ${tools.length === 1 ? 'call' : 'calls'} that returned data.` };
+}
+
 /** Human-readable message from a platform/KAP error body. */
 export function errorMessage(e: unknown): string {
   if (e instanceof PlatformError) {
@@ -253,7 +280,7 @@ export function toTrace(p: PlatformTrace, now = Date.now()): Trace {
       error: s.status === 'no_result' ? 'No result recorded for this tool call' : undefined,
       input: s.kind === 'model' ? { model: p.agent?.model_ref ?? 'model', prompt_tokens: s.tokens?.prompt } : s.input,
       output: s.kind === 'model' ? { completion_tokens: s.tokens?.completion, ...(s.output ? { text: s.output } : {}) } : s.output,
-      result: s.kind === 'tool' ? (typeof s.output === 'string' ? s.output : json(s.output ?? null)).slice(0, 120) : undefined,
+      result: s.kind === 'tool' ? (s.status === 'ok' && isEmptyOutput(s.output) ? 'returned nothing (empty result)' : (typeof s.output === 'string' ? s.output : json(s.output ?? null)).slice(0, 120)) : undefined,
       tokens: s.tokens ? [s.tokens.prompt ?? 0, s.tokens.completion ?? 0] : undefined,
     };
   });
@@ -275,17 +302,21 @@ export function toTrace(p: PlatformTrace, now = Date.now()): Trace {
   for (const s of spans) {
     if (s.kind === 'Queue wait') logs.push({ t: hhmmss(s.startMs + s.durMs), lv: 'INFO', m: `Picked up by a worker after ${Math.round(s.durMs)} ms in kap.agent` });
     else if (s.kind === 'Model call') logs.push({ t: hhmmss(s.startMs), lv: 'INFO', m: `${s.name} · ${s.tokens?.[0] ?? '?'} prompt / ${s.tokens?.[1] ?? '?'} completion tokens · ${Math.round(s.durMs)} ms` });
-    else logs.push({ t: hhmmss(s.startMs), lv: s.state === 'error' || s.error ? 'WARN' : 'INFO', m: `${s.rawName} · ${s.error ?? `ok · ${Math.round(s.durMs)} ms`}` });
+    else logs.push({ t: hhmmss(s.startMs), lv: s.state === 'error' || s.error ? 'WARN' : 'INFO', m: `${s.rawName} · ${s.error ?? (s.result?.startsWith('returned nothing') ? `returned nothing · ${Math.round(s.durMs)} ms` : `ok · ${Math.round(s.durMs)} ms`)}` });
   }
   if (j.finished_at) logs.push({ t: hhmmss(Date.parse(j.finished_at) - t0), lv: j.status === 'failed' ? 'ERROR' : 'INFO', m: `Job ${j.status}${j.error ? ` · ${j.error}` : ''}` });
 
   const selected = spans.find((s) => s.kind === 'Tool') ?? spans[0];
+  // KAP may fail a job without a message; then name the step it stopped at
+  const lastTool = [...spans].reverse().find((s) => s.kind === 'Tool');
+  const reason = j.error ?? (j.status === 'failed' && lastTool && (lastTool.error || lastTool.state === 'error') ? `KAP gave no error message. The run stopped after the tool call ${lastTool.rawName}, which returned no result: check its input in Path and Trace.` : undefined);
   return {
     job,
     uuid: j.id,
     status: job.status,
     statusLabel: STATUS_LABEL[job.status],
-    reason: j.error ?? undefined,
+    reason,
+    grounding: grounding(j.status, spans),
     prompt: j.user_prompt ?? json(j.payload ?? null),
     answer: j.status === 'succeeded' && (j.result ?? p.trace.answer) ? [String(j.result ?? p.trace.answer)] : null,
     duration: job.duration,

@@ -174,6 +174,9 @@ export function runOverview(t: Trace, c: { openAgent: (a: string) => void; live:
         { ...fr('Status', '', t.reason ?? ''), cells: [cell('Status'), cell('', { p: statusPill(t.statusLabel) })] },
         fr('Request', t.prompt, ''),
         fr('Answer', t.answer ? t.answer.map((p) => (typeof p === 'string' ? p : p.v)).join('') : '—', 'Output record · access-controlled'),
+        ...(t.grounding
+          ? [{ ...fr('Evidence', '', t.grounding.text), cells: [cell('Evidence'), cell('', { p: t.grounding.tone === 'ok' ? ['approved', 'Backed by data'] : t.grounding.tone === 'warn' ? ['review', 'Model only'] : ['rejected', 'Not backed by data'], sub: t.grounding.text })] }]
+          : []),
         fr('Caller', j.user, "Ran with this identity's permissions"),
         fr('Timing', `${t.createdRel} · ${t.duration}`, t.createdAbs),
         fr('Limits', `${meters['Model requests'] ?? '—'} model requests · ${meters['Tool calls'] ?? '—'} tool calls`, meters['Elapsed vs timeout'] ? `Elapsed vs timeout ${meters['Elapsed vs timeout']}` : ''),

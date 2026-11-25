@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { summarize, toJob, toTrace, type PlatformTrace } from './platformLive';
+import { grounding, isEmptyOutput, summarize, toJob, toTrace, type PlatformTrace } from './platformLive';
 
 // Shape and numbers of the real trace returned by the platform API on the test
 // stand (job 290e360f…, 24 Nov 2026), with tool outputs as KAP returned them.
@@ -105,5 +105,22 @@ describe('summarize', () => {
   it('counts statuses and averages finished durations', () => {
     const jobs = [toJob(sample.job, NOW), toJob({ ...sample.job, id: 'x', status: 'failed', error: 'boom' }, NOW), toJob({ ...sample.job, id: 'y', status: 'running', finished_at: null }, NOW)];
     expect(summarize(jobs)).toEqual({ total: 3, succeeded: 1, failed: 1, running: 1, avgDuration: '10.0 s' });
+  });
+});
+
+describe('grounding', () => {
+  const tool = (output: unknown, o: Partial<{ error: string; state: 'ok' | 'error' }> = {}) => ({ kind: 'Tool' as const, output, state: 'ok' as const, ...o });
+  const model = { kind: 'Model call' as const, output: { text: 'x' }, state: 'ok' as const };
+
+  it('recognises empty tool outputs', () => {
+    for (const e of [null, undefined, '', '  ', '[]', '{}', 'null', '""', [], {}]) expect(isEmptyOutput(e)).toBe(true);
+    for (const v of ['[{"chunk":"a"}]', 'text', [1], { a: 1 }, 0]) expect(isEmptyOutput(v)).toBe(false);
+  });
+
+  it('flags an answer whose only search returned nothing (seen on the stand: invented control phrase)', () => {
+    expect(grounding('succeeded', [model, tool(''), model])).toMatchObject({ tone: 'bad' });
+    expect(grounding('succeeded', [model, model])).toMatchObject({ tone: 'warn' });
+    expect(grounding('succeeded', [model, tool('[{"chunk":"amber lantern"}]'), tool('[]'), model])).toMatchObject({ tone: 'ok', text: 'Backed by 1 of 2 tool calls that returned data.' });
+    expect(grounding('failed', [model, tool('')])).toBeUndefined();
   });
 });
