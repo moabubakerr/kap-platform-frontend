@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { IngestTenant } from '@/v35/data/ingest';
 import { pipeScreen, runScreen, runsScreen, sourceScreen, sourcesScreen, type IngestCtx } from './build';
 import {
-  connectorValues, isSess, KEYS_REF, kapOfPipe, NEW_KEYS, pipelineValues, rel, runId, runStatus, span, toIngestTenant, toKapConnectorCreate, toKapConnectorPatch, toKapPipelineCreate, toKapPipelinePatch,
+  connectorValues, isSess, KEYS_REF, unsupportedExts, kapOfPipe, NEW_KEYS, pipelineValues, rel, runId, runStatus, span, toIngestTenant, toKapConnectorCreate, toKapConnectorPatch, toKapPipelineCreate, toKapPipelinePatch,
   toKapPipelineRestore, toKapRun, toPipeline, toRun, toSource, validateConnector, validatePipeline,
   type KapCollection, type KapConnector, type KapIngest, type KapJob, type KapPipeline,
 } from './fromKap';
@@ -188,6 +188,11 @@ describe('connector bodies', () => {
         },
       },
     });
+  });
+
+  it('flags include patterns KAP cannot read', () => {
+    expect(unsupportedExts('**/*.pdf, **/*.docx, **/*.txt, *.TXT, **/*.md')).toEqual(['txt', 'md']);
+    expect(unsupportedExts('**/*.pdf, data/*, ')).toEqual([]);
   });
 
   it('sends typed key values by default (KAP without a secret store)', () => {

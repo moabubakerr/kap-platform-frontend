@@ -451,6 +451,16 @@ export const NAME_RX_KAP = /^[a-zA-Z0-9_]{4,32}$/;
 export const PIPE_NAME_RX_KAP = /^[a-zA-Z0-9_]{4,64}$/;
 export const UUID_RX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export const INTERVALS = ['PT3M', 'PT15M', 'PT1H', 'PT6H', 'P1D'];
+/** File types KAP pipelines can read (OpenAPI `SupportedFileExtension`). */
+export const KAP_EXTS = ['csv', 'pdf', 'doc', 'docx', 'xls', 'xlsx', 'jpeg', 'jpg', 'png', 'tiff', 'tif', 'wav', 'mp3', 'mp4', 'zip'];
+/** Extensions named in include patterns that KAP cannot read (e.g. `**\/*.txt` → ['txt']). */
+export function unsupportedExts(include: unknown): string[] {
+  const exts = String(include ?? '')
+    .split(',')
+    .map((g) => g.trim().match(/\.([A-Za-z0-9]+)$/)?.[1]?.toLowerCase())
+    .filter((x): x is string => !!x && !x.includes('*'));
+  return [...new Set(exts.filter((x) => !KAP_EXTS.includes(x)))];
+}
 export const KEEP_KEYS = 'Keep the stored keys';
 export const NEW_KEYS = 'Set new keys';
 /** How the keys are given: typed values (KAP with SECRET_PROVIDER_MODE=disabled, e.g. the test stand) or secret-store references. */

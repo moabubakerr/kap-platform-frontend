@@ -218,7 +218,7 @@ export function useIngest(): IngestCtx & { tenant: IngestTenantKey | null; liveS
       const fields: FormField[] = [
         { k: 'coll', label: 'Collection', type: 'select', opts: colls.map((c) => c.name), hint: 'A run processes the files of one collection that references this pipeline.' },
         { k: 'conn', label: 'Connector', type: 'select', opts: ['All connectors', ...[...new Set(colls.flatMap((c) => c.connectors))]], hint: "Optional: only the files that connector brought in. It must be one of the collection's connectors." },
-        { type: 'note', tone: 'info', text: 'Unchanged files are not processed again. New and changed objects are discovered during the run.' },
+        { type: 'note', tone: 'info', text: "A run processes the files the collection's connectors have already found. Connectors scan their bucket on their sync interval (e.g. every 3 minutes): a file uploaded just now is picked up by the next scan, which processes it on its own. Unchanged files are not processed again." },
       ];
       d.form(`Run ${pid}`, fields, 'Run now', (v) => start(v.coll || colls[0].name, v.conn || 'All connectors'));
     };

@@ -5,7 +5,7 @@
  */
 import type { FormField, FormValues, WizardSpec } from '@/engine/dialogs';
 import {
-  connectorValues, DOC_EXTS, IMG_EXTS, intervalL, INTERVALS, KEEP_KEYS, KEYS_REF, KEYS_TYPED, NEW_KEYS, NO_MODEL, pipelineValues, TASKS, toKapConnectorPatch, toKapPipelinePatch, validateConnector, validatePipeline,
+  connectorValues, DOC_EXTS, IMG_EXTS, intervalL, INTERVALS, KEEP_KEYS, KEYS_REF, KEYS_TYPED, NEW_KEYS, NO_MODEL, pipelineValues, TASKS, toKapConnectorPatch, toKapPipelinePatch, unsupportedExts, validateConnector, validatePipeline,
   type KapConnector, type KapModel, type KapPipeline,
 } from './fromKap';
 import { SRC_TYPES } from './logic';
@@ -66,6 +66,9 @@ export function connectorWizard({ conn, mode, existing, finish }: ConnWizardArgs
           { k: 'bucket_name', label: 'Bucket', type: 'text', ph: 'bucket-name' },
           { k: 'prefix', label: 'Prefix (optional)', type: 'text', ph: 'e.g. exports/', hint: 'Only objects whose key starts with the prefix are selected.' },
           { k: 'include', label: 'Include patterns (optional)', type: 'text', ph: '**/*.pdf, **/*.docx', hint: 'Comma-separated globs. Empty selects every object.' },
+          ...(unsupportedExts(v.include).length
+            ? [{ type: 'note', tone: 'warn', text: `KAP pipelines cannot read ${unsupportedExts(v.include).map((x) => `.${x}`).join(', ')} files, so they will be skipped. Documents: PDF, DOC, DOCX; images go through a vision model; indicator packages: CSV.` } as FormField]
+            : []),
           { k: 'exclude', label: 'Exclude patterns (optional)', type: 'text', ph: '*.log, temp/*' },
           { k: 'interval', label: 'Sync interval', type: 'select', opts: [...new Set([...INTERVALS, v.interval].filter(Boolean))], hint: `${intervalL(v.interval)}. KAP scans the bucket on this interval and processes new or changed files.` },
           { k: 'use_ssl', label: 'Use SSL', type: 'select', opts: yesNo },
