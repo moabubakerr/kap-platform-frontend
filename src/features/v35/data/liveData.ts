@@ -21,9 +21,10 @@ import { recordAudit } from '@/v35/data/audit';
 import { businessStore, type DataTenant } from '@/v35/data/businessData';
 import type { LiveHub } from './build';
 import {
-  BUSY_STATES, FAILED_STATES, MAX_DOCS, PAGE, agentCollections, collectionOfDataset, docIds, emptyCache, kindOf, obsKey, pageKey, parseDocId, toKapCollectionCreate, toKapCollectionPatch, toKapEntityTypeCreate, toKapObservationPatch, toTenantData,
-  type CollectionForm, type KapAgent, type KapCache, type KapCollection, type KapConnector, type KapEntityType, type KapFile, type KapFileVersion, type KapObservation, type KapPipeline,
+  BUSY_STATES, FAILED_STATES, GROUP_FILES, MAX_DOCS, PAGE, agentCollections, collectionOfDataset, docIds, emptyCache, kindOf, obsKey, pageKey, parseDocId, searchFix, toKapCollectionCreate, toKapCollectionPatch, toKapEntityTypeCreate, toKapObservationPatch, toTenantData,
+  type CollectionForm, type KapAgent, type KapCache, type KapCollection, type KapConnector, type KapEntityType, type KapFile, type KapFileVersion, type KapModelProvider, type KapObservation, type KapPipeline,
 } from './fromKap';
+import { FALLBACK_TYPE, pickEntityType } from './search';
 import { dataSession, type LivePage } from './session';
 
 /** What has been read from KAP, per live tenant. */
@@ -57,10 +58,16 @@ const total = async (tid: string, path: string, q: Record<string, string | numbe
 async function loadBusiness(t: DataTenant, tid: string) {
   const [collections, entityTypes] = await Promise.all([kapAll<KapCollection>(tid, 'collections'), kapAll<KapEntityType>(tid, 'entity-types')]);
   // lists the hub can do without (permission): kinds then fall back to pipeline names, agents to none
-  const [pipelines, connectors, agents] = await Promise.all([optional(kapAll<KapPipeline>(tid, 'pipelines')), optional(kapAll<KapConnector>(tid, 'connectors')), optional(kapAll<KapAgent>(tid, 'agents'))]);
+  const [pipelines, connectors, agents, models] = await Promise.all([
+    optional(kapAll<KapPipeline>(tid, 'pipelines')),
+    optional(kapAll<KapConnector>(tid, 'connectors')),
+    optional(kapAll<KapAgent>(tid, 'agents')),
+    optional(kapAll<KapModelProvider>(tid, 'model-providers')),
+  ]);
   const fileTotal: KapCache['fileTotal'] = {};
   const fileStates: KapCache['fileStates'] = {};
   const obsTotal: KapCache['obsTotal'] = {};
+  const groupPaths: NonNullable<KapCache['groupPaths']> = {};
   await Promise.all(
     collections.map(async (c) => {
       if (kindOf(c, pipelines) === 'indicators') {
@@ -71,15 +78,22 @@ async function loadBusiness(t: DataTenant, tid: string) {
         const base = `collections/${c.id}/files`;
         // documents are done at `embedded`, so it is not "busy" here
         const busyStates = BUSY_STATES.filter((s) => s !== 'embedded');
-        const [all, failed, busy] = await Promise.all([total(tid, base), total(tid, base, { state__in: FAILED_STATES }), total(tid, base, { state__in: busyStates })]);
+        const [all, failed, busy, sample] = await Promise.all([
+          total(tid, base),
+          total(tid, base, { state__in: FAILED_STATES }),
+          total(tid, base, { state__in: busyStates }),
+          // source paths for the collection's document group ids ("Searchable by agents")
+          optional(kapAll<KapFile>(tid, base, { sort: 'name' }, GROUP_FILES)),
+        ]);
         if (all != null) fileTotal[c.id] = all;
         if (failed != null && busy != null) fileStates[c.id] = { failed, busy };
+        if (sample) groupPaths[c.id] = { paths: sample.map((f) => f.source_path), total: all ?? sample.length };
       }
     }),
   );
   setCache(t, (x) => {
     const ids = new Set(collections.map((c) => c.id));
-    Object.assign(x, { loaded: true, collections, entityTypes, pipelines, connectors, agents, fileTotal, fileStates, obsTotal });
+    Object.assign(x, { loaded: true, collections, entityTypes, pipelines, connectors, agents, models, fileTotal, fileStates, obsTotal, groupPaths });
     for (const [id, f] of Object.entries(x.files)) if (!ids.has(f.collection_id)) delete x.files[id];
   });
 }
@@ -225,6 +239,18 @@ export function useLiveHub(t: DataTenant | null, uid: string, toast: (m: string)
     const fileOf = (docId: string) => docIds(cacheOf(T)).get(docId) ?? null;
     const typeOf = (name: string) => cacheOf(T).entityTypes.find((e) => e.name === name) ?? null;
     const missing = (what: string) => Promise.resolve(`${what} is no longer in KAP. Refresh and try again.`);
+    /** search on without an entity type: the collection's own, a generic one, or create FALLBACK_TYPE first */
+    const withType = async (v: CollectionForm, c?: KapCollection): Promise<CollectionForm> => {
+      if (!v.search?.on || v.search.typeRef) return v;
+      const own = c?.entity?.enabled ? c.entity.entity_type_ref : null;
+      let ref = own || pickEntityType(cacheOf(T).entityTypes);
+      if (!ref) {
+        await kap(tid, 'POST', 'entity-types', FALLBACK_TYPE);
+        audit('Created entity type', `${FALLBACK_TYPE.name} · for agent search`);
+        ref = FALLBACK_TYPE.name;
+      }
+      return { ...v, search: { ...v.search, typeRef: ref } };
+    };
 
     const hub: LiveHub = {
       cache,
@@ -235,15 +261,49 @@ export function useLiveHub(t: DataTenant | null, uid: string, toast: (m: string)
       setObsAt: (ds, v) => dataSession.update((s) => { s.liveObs[ds] = v; }),
 
       createCollection: (v: CollectionForm) => {
-        const body = toKapCollectionCreate(v);
-        return save(() => kap(tid, 'POST', 'collections', body), 'Created collection', `${body.name} · pipeline ${body.pipeline_ref}`, `${body.name} created in KAP. Its connectors' files are ingested on the next synchronization.`);
+        const name = String(v.name ?? '').trim();
+        return save(
+          async () => {
+            const f = await withType(v);
+            await kap(tid, 'POST', 'collections', toKapCollectionCreate(f));
+          },
+          'Created collection',
+          `${name} · pipeline ${v.pipeline}${v.search ? ` · searchable by agents: ${v.search.on ? 'yes' : 'no'}` : ''}`,
+          `${name} created in KAP. Its connectors' files are ingested on the next synchronization.`,
+        );
       },
       updateCollection: (name, v) => {
         const c = coll(name);
         if (!c) return missing(name);
-        const body = toKapCollectionPatch(c, v);
-        if (!body) return Promise.resolve('No change.');
-        return save(() => kap(tid, 'PATCH', `collections/${c.id}`, body), 'Updated collection', `${name} · ${Object.keys(body).join(', ')}`, `${name} saved in KAP.`);
+        const draft = toKapCollectionPatch(c, v);
+        if (!draft) return Promise.resolve('No change.');
+        return save(
+          async () => {
+            const body = toKapCollectionPatch(c, await withType(v, c));
+            if (body) await kap(tid, 'PATCH', `collections/${c.id}`, body);
+          },
+          'Updated collection',
+          `${name} · ${Object.keys(draft).join(', ')}`,
+          `${name} saved in KAP.`,
+        );
+      },
+      fixSearch: (name) => {
+        const c = coll(name);
+        if (!c) return missing(name);
+        const fx = searchFix(cacheOf(T), c);
+        if (fx.err) return Promise.resolve(fx.err);
+        if (!fx.stages && !fx.entity) return Promise.resolve('Nothing to change: the collection is searchable.');
+        const what = [fx.createType ? `created entity type ${fx.typeRef}` : '', fx.stages ? `pipeline ${c.pipeline_ref}: summarize stage added` : '', fx.entity ? 'entity grouping set' : ''].filter(Boolean).join(' · ');
+        return save(
+          async () => {
+            if (fx.createType) await kap(tid, 'POST', 'entity-types', FALLBACK_TYPE);
+            if (fx.stages) await kap(tid, 'PATCH', `pipelines/${fx.pipeline!.id}`, { stages: fx.stages });
+            if (fx.entity) await kap(tid, 'PATCH', `collections/${c.id}`, { entity: fx.entity });
+          },
+          'Made collection searchable by agents',
+          `${name} · ${what}`,
+          `${name} updated in KAP. Its files are reprocessed; agents can search it once processing has finished.`,
+        );
       },
       deleteCollection: (name) => {
         const c = coll(name);

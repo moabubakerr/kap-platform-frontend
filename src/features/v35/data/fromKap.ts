@@ -9,6 +9,10 @@
  * the previous slice.
  */
 import type { DhCollection, DhDataset, DhDocument, DhField, IngestPipelineRef, IngestRef, OntoAttr, OntoType, TenantData } from '@/v35/data/businessData';
+import {
+  DEFAULT_CHAT, entityBlock, FALLBACK_TYPE, groupIds, pickEntityType, sameEntity, searchableStatus, searchSettingsOf, withSummarizeStage,
+  type GroupIds, type LooseStage, type Searchable, type SearchSettings,
+} from './search';
 
 // ------------------------------------------------------------------ KAP records (OpenAPI schemas)
 export type KapSyncStrategy = 'overwrite' | 'unique_name';
@@ -40,7 +44,7 @@ export interface KapPipeline {
   kind: 'document' | 'indicators';
   mode?: string | null;
   embedding_model_ref?: string | null;
-  stages?: { name?: string; type?: string }[];
+  stages?: LooseStage[];
   is_active?: boolean;
 }
 /** ConnectorOut (the parts the hub reads) */
@@ -144,9 +148,21 @@ export interface KapCache {
   obs: Record<string, Record<string, { items: KapObservation[]; total: number }>>;
   /** collections whose file list was cut at the per-collection maximum (Unstructured Data) */
   truncated: string[];
+  /** model providers (ModelProviderOut); null: not readable */
+  models?: KapModelProvider[] | null;
+  /** source paths of a collection's files, for its document group ids (collection id → paths; up to GROUP_FILES) */
+  groupPaths?: Record<string, { paths: string[]; total: number }>;
 }
+/** ModelProviderOut (the parts the hub reads) */
+export interface KapModelProvider {
+  id: string;
+  name: string;
+  model_type: 'chat' | 'embedding' | string;
+}
+/** files read per document collection to derive its group ids */
+export const GROUP_FILES = 500;
 
-export const emptyCache = (): KapCache => ({ loaded: false, collections: [], pipelines: null, connectors: null, agents: null, entityTypes: [], fileTotal: {}, fileStates: {}, obsTotal: {}, files: {}, versions: {}, filePages: {}, obs: {}, truncated: [] });
+export const emptyCache = (): KapCache => ({ loaded: false, collections: [], pipelines: null, connectors: null, agents: null, entityTypes: [], fileTotal: {}, fileStates: {}, obsTotal: {}, files: {}, versions: {}, filePages: {}, obs: {}, truncated: [], models: null, groupPaths: {} });
 export const obsKey = (status: string, offset: number, size = PAGE) => `${status}:${offset}:${size}`;
 export const pageKey = (offset: number, size = PAGE) => `${offset}:${size}`;
 
@@ -424,8 +440,10 @@ export interface CollectionForm {
   pipeline?: string;
   connectors?: string[];
   sync?: string;
-  /** entity type name or 'Off' */
+  /** entity type name or 'Off' (ignored when `search` is given) */
   entity?: string;
+  /** document collections: agent search settings (entity block); `typeRef` resolved before the write */
+  search?: SearchSettings;
 }
 export const ENTITY_OFF = 'Off';
 export const SYNC_OPTS: KapSyncStrategy[] = ['unique_name', 'overwrite'];
@@ -450,7 +468,7 @@ export function toKapCollectionCreate(v: CollectionForm) {
     pipeline_ref: String(v.pipeline ?? '').trim(),
     connectors: (v.connectors ?? []).slice(),
     sync_strategy: (SYNC_OPTS.includes(v.sync as KapSyncStrategy) ? v.sync : 'unique_name') as KapSyncStrategy,
-    entity: ref ? { enabled: true, entity_type_ref: ref } : { enabled: false },
+    entity: v.search ? entityBlock(v.search, v.search.typeRef) : ref ? { enabled: true, entity_type_ref: ref } : { enabled: false },
   };
 }
 
@@ -460,7 +478,10 @@ export function toKapCollectionPatch(c: KapCollection, v: CollectionForm): Recor
   if (v.pipeline != null && v.pipeline !== c.pipeline_ref) out.pipeline_ref = v.pipeline;
   if (v.connectors && JSON.stringify([...v.connectors].sort()) !== JSON.stringify([...c.connectors].sort())) out.connectors = v.connectors.slice();
   if (v.sync && v.sync !== c.sync_strategy) out.sync_strategy = v.sync;
-  if (v.entity != null) {
+  if (v.search) {
+    const next = entityBlock(v.search, v.search.typeRef || c.entity?.entity_type_ref || '', c.entity);
+    if (!sameEntity(next, c.entity)) out.entity = next;
+  } else if (v.entity != null) {
     const ref = v.entity !== ENTITY_OFF ? v.entity : null;
     const cur = c.entity?.enabled ? (c.entity.entity_type_ref ?? null) : null;
     // keep the collection's other entity rules (boundary, identity, summary, metadata)
@@ -527,3 +548,57 @@ export function schemaWithoutAttr(schema: Record<string, any> | null | undefined
 
 /** Collections that reference an entity type (KAP refuses to delete or rename it while they do). */
 export const collectionsUsingType = (cache: KapCache, type: string) => cache.collections.filter((c) => c.entity?.entity_type_ref === type).map((c) => c.name);
+
+// ------------------------------------------------------------------ agent search (hybrid_search)
+/** Chat model providers by name (for the summary model). */
+export const chatModels = (cache: KapCache): string[] => (cache.models ?? []).filter((m) => m.model_type === 'chat').map((m) => m.name);
+/** Default summary model: `chat_default` when it exists (or the list is unreadable), else the first chat model. */
+export function defaultChat(cache: KapCache): string {
+  const ms = chatModels(cache);
+  return !ms.length || ms.includes(DEFAULT_CHAT) ? DEFAULT_CHAT : ms[0];
+}
+
+/** Searchable-by-agents status and derived group ids of a collection. */
+export function collectionSearch(cache: KapCache, c: KapCollection): { status: Searchable; groups: GroupIds; sampled: boolean } {
+  const pipe = cache.pipelines?.find((p) => p.name === c.pipeline_ref) ?? null;
+  const gp = cache.groupPaths?.[c.id];
+  const paths = gp ? gp.paths : Object.values(cache.files).filter((f) => f.collection_id === c.id).map((f) => f.source_path);
+  const total = gp ? gp.total : cache.fileTotal[c.id] ?? paths.length;
+  return { status: searchableStatus(c.entity, pipe), groups: groupIds(c.id, c.entity, paths), sampled: paths.length < total };
+}
+
+export interface SearchFix {
+  /** '' or why it cannot be fixed here */
+  err: string;
+  pipeline: KapPipeline | null;
+  /** new stages for the pipeline; null = the pipeline already has a summary step */
+  stages: LooseStage[] | null;
+  /** other collections that use the pipeline (reprocessed too) */
+  others: string[];
+  /** new entity block; null = already fine */
+  entity: KapEntitySpec | null;
+  typeRef: string;
+  /** the entity type must be created first (FALLBACK_TYPE) */
+  createType: boolean;
+}
+
+/** What "Fix" changes so a document collection becomes searchable by agents. */
+export function searchFix(cache: KapCache, c: KapCollection): SearchFix {
+  const { status } = collectionSearch(cache, c);
+  const model = defaultChat(cache);
+  const pipe = cache.pipelines?.find((p) => p.name === c.pipeline_ref) ?? null;
+  const base: SearchFix = { err: '', pipeline: pipe, stages: null, others: [], entity: null, typeRef: '', createType: false };
+  if (status.summary === null) return { ...base, err: `The pipeline ${c.pipeline_ref} could not be read, so its stages cannot be checked or changed here.` };
+  const set = { ...searchSettingsOf(c.entity, model), on: true };
+  if (status.summary === false) {
+    base.stages = withSummarizeStage(pipe!.stages ?? [], model, set.prompt).stages;
+    base.others = cache.collections.filter((x) => x.id !== c.id && x.pipeline_ref === c.pipeline_ref).map((x) => x.name);
+  }
+  if (!status.grouping) {
+    const ref = (c.entity?.enabled && c.entity.entity_type_ref) || pickEntityType(cache.entityTypes) || FALLBACK_TYPE.name;
+    base.typeRef = ref;
+    base.createType = !cache.entityTypes.some((t) => t.name === ref);
+    base.entity = entityBlock(set, ref, c.entity);
+  }
+  return base;
+}

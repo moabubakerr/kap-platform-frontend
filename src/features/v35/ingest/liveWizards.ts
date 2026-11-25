@@ -157,13 +157,22 @@ const modelOpts = (models: KapModel[], type: string, cur?: string, none = false)
   ...new Set([...models.filter((m) => m.model_type === type).map((m) => m.name), ...(cur && cur !== NO_MODEL ? [cur] : [])]),
 ];
 
+/** Wizard values: a new document pipeline summarizes with `chat_default`, or the first chat model when there is none of that name. */
+export function initialPipe(pipe: KapPipeline | null, models: KapModel[]): FormValues {
+  const v = pipelineValues(pipe);
+  if (pipe) return v;
+  const chats = models.filter((m) => m.model_type === 'chat').map((m) => m.name);
+  if (chats.length && !chats.includes(v.chat)) v.chat = chats[0];
+  return v;
+}
+
 export function kapPipeWizard({ pipe, existing, models, usedBy, finish }: PipeWizardArgs): WizardSpec {
   const edit = !!pipe;
   return {
     title: edit ? `Edit ${pipe!.name}` : 'Create pipeline',
     steps: ['General', 'Stages', 'Review'],
     finishL: edit ? 'Save changes' : 'Save pipeline',
-    initial: pipelineValues(pipe),
+    initial: initialPipe(pipe, models),
     fields: (step, v) => {
       let f: FormField[];
       const ind = v.kind === 'indicators';
@@ -172,6 +181,7 @@ export function kapPipeWizard({ pipe, existing, models, usedBy, finish }: PipeWi
           { k: 'name', label: 'Pipeline name', type: 'text', ro: edit, ph: 'e.g. contracts_docs', hint: edit ? 'Collections refer to the pipeline by name.' : '4–64 letters, digits and underscores.' },
           edit ? { type: 'kv', rows: [['Kind', ind ? 'Indicators (CSV packages)' : 'Documents']] } : { k: 'kind', label: 'Kind', type: 'select', opts: ['document', 'indicators'], hint: 'document: parse, optionally summarize, then embed files. indicators: load CSV indicator packages.' },
           { type: 'note', tone: 'info', text: 'A pipeline gets its files through the collections that reference it. KAP runs it when you run it over a collection, or when a connector syncs. Pipeline schedules and event triggers are not available in KAP.' },
+          ...(edit ? [{ type: 'note', tone: 'warn', text: `Changing the stages reprocesses every collection that uses this pipeline: ${usedBy.length ? usedBy.join(', ') : 'none right now'}.` } as FormField] : []),
         ];
       else if (step === 1) {
         const emb = modelOpts(models, 'embedding', v.embed);
@@ -189,8 +199,11 @@ export function kapPipeWizard({ pipe, existing, models, usedBy, finish }: PipeWi
             { k: 'exts', label: 'Parse documents', type: 'chips', opts: DOC_EXTS, hint: 'Each file type gets its parser (markdown output).' },
             { k: 'imgs', label: 'Parse images with a vision model (optional)', type: 'chips', opts: IMG_EXTS },
             ...((v.imgs || []).length ? [{ k: 'vision', label: 'Vision model', type: 'select', opts: modelOpts(models, 'chat', v.vision, true) } as FormField] : []),
-            { k: 'tasks', label: 'Transformer tasks (optional)', type: 'chips', opts: TASKS, hint: 'Summary and metadata need a chat model.' },
+            { k: 'tasks', label: 'Summarize and other transformer tasks', type: 'chips', opts: TASKS, hint: 'summary: KAP summarizes each document group, which agents search with hybrid_search. Summary and metadata need a chat model.' },
             ...((v.tasks || []).length ? [{ k: 'chat', label: 'Chat model', type: 'select', opts: modelOpts(models, 'chat', v.chat, true) } as FormField] : []),
+            ...((v.tasks || []).includes('summary')
+              ? [{ k: 'prompt', label: 'Summary prompt', type: 'textarea', rows: 4, hint: 'Used for the initial, refine and merge steps. Collections can set their own summary prompt for their document groups.' } as FormField]
+              : [{ type: 'note', tone: 'warn', label: 'No summary step', text: 'Agents will not be able to search collections that use this pipeline: hybrid_search needs the document group summaries.' } as FormField]),
             { k: 'embed', label: 'Embedding model', type: 'select', opts: emb },
             ...noEmb,
             { k: 'chunk', label: 'Chunk size (tokens)', type: 'num', ph: '800', hint: '50–4096' },
@@ -210,6 +223,7 @@ export function kapPipeWizard({ pipe, existing, models, usedBy, finish }: PipeWi
                   ['Kind', 'Documents'],
                   ['Parser', [...(v.exts || []), ...((v.imgs || []).length ? [`${v.imgs.join(', ')} via ${v.vision}`] : [])].join(', ')],
                   ['Transformer', (v.tasks || []).length ? `${v.tasks.join(', ')} · ${v.chat}` : 'None'],
+                  ['Searchable by agents', (v.tasks || []).includes('summary') ? 'Yes, with collections that group their documents' : 'No (no summary step)'],
                   ['Embedding', `${v.embed} · ${v.chunk} tokens, ${v.overlap} overlap`],
                 ],
           },

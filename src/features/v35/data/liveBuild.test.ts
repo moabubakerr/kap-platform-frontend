@@ -8,6 +8,8 @@ import { agentCollections, obsKey, pageKey, toIngestRef, toTenantData, type KapC
 import { fixtureCache } from './fromKap.fixtures';
 import { liveCollectionScreen, liveCollectionsScreen, liveDatasetScreen, liveDocumentScreen, liveDocumentsScreen, liveEntitiesScreen } from './liveBuild';
 import { UD_DEFAULT } from './session';
+import { AUTO_TYPE } from './liveBuild';
+import { SUMMARY_PROMPT } from './search';
 
 type Calls = { forms: { title: string; fields: FormField[]; save: (v: FormValues) => SaveResult }[]; confirms: { title: string; fn: () => unknown }[]; go: string[]; writes: [string, ...unknown[]][] };
 
@@ -25,7 +27,7 @@ function liveHub(uid = 'r.haddad', cache: KapCache = fixtureCache()): Hub & { ca
     setFilesAt: (c, v) => { pages[`f:${c}`] = v; },
     obsAt: (d) => (pages[`o:${d}`] as { offset: number; size: number; status: string }) ?? { offset: 0, size: 25, status: '' },
     setObsAt: (d, v) => { pages[`o:${d}`] = v; },
-    createCollection: w('createCollection'), updateCollection: w('updateCollection'), deleteCollection: w('deleteCollection'),
+    createCollection: w('createCollection'), updateCollection: w('updateCollection'), deleteCollection: w('deleteCollection'), fixSearch: w('fixSearch'),
     reprocessFile: w('reprocessFile'), deleteFile: w('deleteFile'), download: (id) => { calls.writes.push(['download', id]); },
     correctObservation: w('correctObservation'), createEntityType: w('createEntityType'), updateEntityType: w('updateEntityType'), deleteEntityType: w('deleteEntityType'),
   };
@@ -70,10 +72,35 @@ describe('live Business Data Hub screens', () => {
     const h = liveHub();
     liveCollectionsScreen(h).head.add!.f();
     const f = h.calls.forms[0];
-    expect(f.fields.map((x) => ('k' in x ? x.k : x.type))).toEqual(['name', 'pipeline', 'connectors', 'sync', 'entity', 'note']);
-    expect(await f.save({ name: 'ab', pipeline: 'docs_pipeline', connectors: ['sbx_bucket'] })).toMatch(/4–32/);
-    expect(await f.save({ name: 'supplier_docs', pipeline: 'docs_pipeline', connectors: ['sbx_bucket'], sync: 'unique_name', entity: 'Off' })).toBe('');
-    expect(h.calls.writes[0]).toEqual(['createCollection', { name: 'supplier_docs', pipeline: 'docs_pipeline', connectors: ['sbx_bucket'], sync: 'unique_name', entity: 'Off' }]);
+    expect(f.fields.map((x) => ('k' in x ? x.k : x.type))).toEqual(['name', 'pipeline', 'connectors', 'sync', 'note', 'search', 'entityType', 'depth', 'root', 'model', 'prompt', 'note', 'note']);
+    // search is on by default, with the shared summary prompt; the fixture pipeline has no summary step (warned)
+    const val = (k: string) => (f.fields.find((x) => 'k' in x && x.k === k) as { val?: string }).val;
+    expect([val('search'), val('entityType'), val('depth'), val('root'), val('model'), val('prompt')]).toEqual(['Yes', AUTO_TYPE, '1', '/', 'chat_default', SUMMARY_PROMPT]);
+    expect(f.fields.some((x) => x.type === 'note' && /docs_pipeline/.test(x.text))).toBe(true);
+    const v0 = Object.fromEntries(f.fields.filter((x): x is FormField & { k: string } => 'k' in x).map((x) => [x.k, (x as { val?: unknown }).val]));
+    expect(await f.save({ ...v0, name: 'ab', pipeline: 'docs_pipeline', connectors: ['sbx_bucket'] })).toMatch(/4–32/);
+    expect(await f.save({ ...v0, name: 'supplier_docs', pipeline: 'docs_pipeline', connectors: ['sbx_bucket'], depth: '0' })).toMatch(/Folder depth/);
+    expect(await f.save({ ...v0, name: 'supplier_docs', pipeline: 'docs_pipeline', connectors: ['sbx_bucket'], sync: 'unique_name' })).toBe('');
+    expect(h.calls.writes[0]).toEqual(['createCollection', { name: 'supplier_docs', pipeline: 'docs_pipeline', connectors: ['sbx_bucket'], sync: 'unique_name', search: { on: true, typeRef: '', root: '/', depth: 1, model: 'chat_default', prompt: SUMMARY_PROMPT } }]);
+    // an indicator collection gets no entity block
+    expect(await f.save({ ...v0, name: 'more_ind', pipeline: 'indicator_pipeline', connectors: ['sbx_bucket'], sync: 'unique_name' })).toBe('');
+    expect(h.calls.writes[1]).toEqual(['createCollection', { name: 'more_ind', pipeline: 'indicator_pipeline', connectors: ['sbx_bucket'], sync: 'unique_name', entity: 'Off' }]);
+  });
+
+  it('shows whether a document collection is searchable by agents and fixes it', async () => {
+    const h = liveHub();
+    h.live!.cache.groupPaths = { 'c-sandbox_docs': { paths: ['samples/a.pdf', 'samples/b.pdf', 'reports/2026/q1.pdf', 'root.pdf'], total: 4 } };
+    const m = liveCollectionScreen(h, 'sandbox_docs', 'overview');
+    const row = m.sections[0].rows!.find((r) => r.cells[0].v === 'Searchable by agents')!;
+    expect(row.cells[1].v).toBe('⚠ Not yet');
+    expect(row.cells[1].sub).toMatch(/no group id template/);
+    expect(row.cells[1].sub).toMatch(/no summary step/);
+    expect(formVal(m, 'Document groups')?.v).toBe('c-sandbox_docs:reports, c-sandbox_docs:samples');
+    expect(formVal(m, 'Document groups')?.sub).toMatch(/1 file directly in the root/);
+    row.acts!.find((a) => a.l === 'Fix')!.f();
+    expect(h.calls.confirms[0].title).toBe('Make sandbox_docs searchable by agents?');
+    await h.calls.confirms[0].fn();
+    expect(h.calls.writes[h.calls.writes.length - 1]).toEqual(['fixSearch', 'sandbox_docs']);
   });
 
   it('shows a collection with KAP settings, paged files and read-only agents', async () => {

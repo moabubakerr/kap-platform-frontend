@@ -5,7 +5,31 @@
  * callbacks. Bodies are built and validated in fromKap.ts.
  */
 import type { FormField, FormValues, SaveResult, WizardSpec } from '@/engine/dialogs';
-import { KAP_LIMITS, NAME_HINT, NAME_RE, NONE, parseLimit, toKapCreate, TYPE_L, type KapAgent, type KapEdit, type LiveOpts } from './fromKap';
+import { KAP_LIMITS, NAME_HINT, NAME_RE, NONE, parseLimit, splitList, toKapCreate, TYPE_L, type KapAgent, type KapEdit, type LiveOpts } from './fromKap';
+import {
+  BLOCK_START, ENTITY_MODE_L, needsSearch, roleLine, SEARCH_TOOL, searchBlock, searchTargets, withSearchBlock,
+  type CollSearchInfo, type EntityIdChoice, type EntityIdMode,
+} from './searchBlock';
+
+// ---------------------------------------------------------------- search entity id (console setting)
+const MODE_OF: Record<string, EntityIdMode> = { [ENTITY_MODE_L.group]: 'group', [ENTITY_MODE_L.fixed]: 'fixed' };
+export const choiceOfValues = (v: FormValues): EntityIdChoice => ({ mode: MODE_OF[v.eidMode] ?? 'group', value: String(v.eidValue ?? '').trim() });
+
+/** Fields of the "Search entity id" setting. */
+export function entityIdFields(c: EntityIdChoice, groups: string[]): FormField[] {
+  return [
+    { k: 'eidMode', label: 'Search entity id', type: 'select', opts: [ENTITY_MODE_L.group, ENTITY_MODE_L.fixed], val: ENTITY_MODE_L[c.mode], hint: `Collection document group: ${groups.length ? groups.slice(0, 3).join(', ') + (groups.length > 3 ? ' …' : '') : 'none found yet'} (derived from the files' folders; the first group is used when there are several). Fixed value: the text below.` },
+    { k: 'eidValue', label: 'Fixed value', type: 'text', val: c.value, ph: 'Only with "Fixed value"' },
+    { type: 'note', tone: 'info', text: 'Which entity_id hybrid_search expects is not confirmed yet. This choice is kept in this browser only (not in KAP); it decides what the search instructions write into the system prompt.' },
+  ];
+}
+
+const toolsOfValues = (v: FormValues) => [...new Set(((v.tools as string[]) || []).concat(splitList(v.toolsX)))];
+/** The prompt with the search instructions for these values (role line first when the prompt is empty). */
+export function promptWithSearch(prompt: string, purpose: string, colls: string[], info: Record<string, CollSearchInfo>, choice: EntityIdChoice): string {
+  const base = String(prompt || '').trim() ? prompt : roleLine(purpose);
+  return withSearchBlock(base, searchBlock(searchTargets(colls, info, choice)));
+}
 
 const pick = (opts: string[], cur: string, label: string, k: string, hint?: string): FormField =>
   opts.length ? { k, label, type: 'select', opts: opts.includes(cur) || !cur ? opts : [cur].concat(opts), val: cur || opts[0], hint } : { k, label, type: 'text', val: cur, hint: (hint ? hint + ' ' : '') + 'No list from KAP: type the name.' };
@@ -43,7 +67,20 @@ export function liveWizardFields(o: LiveOpts, step: number, v: FormValues): Form
     ];
   if (step === 1) return [{ k: 'prompt', label: 'System prompt', type: 'textarea', rows: 6, ph: 'What the agent does, how it answers and what it must not do', hint: 'KAP stores it but never returns it.' }];
   if (step === 2) return [pick(o.models, v.model || '', 'Model', 'model', 'Chat model providers of this tenant.')];
-  if (step === 3) return collsF(o, v.colls || []).concat(toolsF(o, v.tools || []));
+  if (step === 3) {
+    const colls: string[] = v.colls || [];
+    const docs = colls.filter((c) => o.search?.[c]?.kind !== 'indicators');
+    const tools = toolsOfValues(v);
+    return collsF(o, colls)
+      .concat(toolsF(o, v.tools || []))
+      .concat(docs.length && !tools.includes(SEARCH_TOOL) ? [{ type: 'note', tone: 'warn', text: `Document collections are searched with ${SEARCH_TOOL}. Add it to the tools, or the agent cannot search ${docs.join(', ')}.` } as FormField] : [])
+      .concat(docs.filter((c) => o.search?.[c] && !o.search[c].ok).map((c) => ({ type: 'note', tone: 'warn', text: `${c} is not searchable by agents yet: ${o.search![c].missing.join('; ')}. Fix it on the collection page.` }) as FormField))
+      .concat(
+        needsSearch(tools, colls, o.search ?? {})
+          ? entityIdFields(choiceOfValues(v), docs.flatMap((c) => o.search?.[c]?.groups ?? [])).concat([{ type: 'note', text: 'The system prompt gets "How to search" instructions for these collections (Instructions step).' }])
+          : [],
+      );
+  }
   if (step === 4)
     return wf ? ioF(o, { input_schema_ref: v.inSchema, output_schema_ref: v.outSchema, user_prompt: v.userPrompt }) : [{ type: 'note', text: 'Planner and executor agents take a free-text request: no input or output schema.' }];
   if (step === 5) return limitsF();
@@ -58,6 +95,7 @@ export function liveWizardFields(o: LiveOpts, step: number, v: FormValues): Form
         ['Purpose', v.description || '—'],
         ['Model', v.model],
         ['Collections', (v.colls || []).join(', ') || 'None'],
+        ['Search instructions', String(v.prompt || '').includes(BLOCK_START) ? 'In the system prompt' : 'None'],
         ['Tools', [...new Set((v.tools || []).concat(String(v.toolsX || '').split(/[\s,]+/).filter(Boolean)))].join(', ') || 'None'],
       ].concat(wf ? [['Input / output schema', (v.inSchema || NONE) + ' / ' + (v.outSchema || NONE)]] : []).concat([['Limits', lim.join(' · ') || 'KAP defaults']]) as [string, unknown][],
     },
@@ -86,10 +124,45 @@ export function liveAgentWizard(o: LiveOpts, names: string[], finish: (v: FormVa
     title: 'Create agent',
     steps: LIVE_WIZARD_STEPS,
     finishL: 'Create in KAP',
-    initial: { type: TYPE_L.workflow, colls: [], tools: [], inSchema: NONE, outSchema: NONE, model: o.models[0] || '' },
-    fields: (step, v) => liveWizardFields(o, step, v),
-    validate: (step, v) => validateLiveStep({ names }, step, v),
+    initial: { type: TYPE_L.workflow, colls: [], tools: [], inSchema: NONE, outSchema: NONE, model: o.models[0] || '', eidMode: ENTITY_MODE_L.group, eidValue: '' },
+    fields: (step, v, set) => (step === 1 ? instructionFields(o, v, set) : liveWizardFields(o, step, v)),
+    validate: (step, v, set) => {
+      const e = validateLiveStep({ names }, step, v);
+      if (e) return e;
+      // after Knowledge & tools: prefill / refresh the search instructions in the prompt
+      if (step === 3 && needsSearch(toolsOfValues(v), v.colls || [], o.search ?? {})) set('prompt', promptWithSearch(v.prompt || '', v.description || '', v.colls || [], o.search ?? {}, choiceOfValues(v)));
+      return '';
+    },
     finish,
+  };
+}
+
+/** Instructions step of the create wizard: the prompt, and "Insert search instructions" once document collections are chosen. */
+function instructionFields(o: LiveOpts, v: FormValues, set: (k: string, val: unknown) => void): FormField[] {
+  const f = liveWizardFields(o, 1, v);
+  const colls: string[] = v.colls || [];
+  if (!needsSearch(toolsOfValues(v), colls, o.search ?? {}))
+    return f.concat([{ type: 'note', text: `Search instructions for ${SEARCH_TOOL} are added after you choose document collections and the ${SEARCH_TOOL} tool (Knowledge & tools).` }]);
+  return f.concat([{ type: 'button', label: 'Insert search instructions', hint: 'Replaces the "How to search" block, or adds it at the end.', click: () => set('prompt', promptWithSearch(v.prompt || '', v.description || '', colls, o.search ?? {}, choiceOfValues(v))) }]);
+}
+
+/** System prompt editor (Configuration): the full prompt, with "Insert search instructions" when the agent searches documents. */
+export function systemPromptWizard(k: KapAgent, info: Record<string, CollSearchInfo>, choice: EntityIdChoice, save: (v: FormValues) => SaveResult): WizardSpec {
+  const search = needsSearch(k.allowed_tools || [], k.collections || [], info);
+  return {
+    title: EDIT_TITLE.system_prompt + ' · ' + k.name,
+    steps: ['System prompt'],
+    finishL: 'Save to KAP',
+    initial: { prompt: '' },
+    fields: (_s, v, set) => [
+      { k: 'prompt', label: 'System prompt', type: 'textarea', rows: 12, val: '', hint: (k.system_prompt_is_set ? 'A prompt is set. ' : 'No prompt is set. ') + 'KAP never returns it: enter the full prompt; saving replaces it.' },
+      ...(search
+        ? [{ type: 'button', label: 'Insert search instructions', hint: `Replaces the block that starts with "${BLOCK_START}", or adds it at the end. Entity id: ${ENTITY_MODE_L[choice.mode]}${choice.mode === 'fixed' ? ' (' + (choice.value || 'empty') + ')' : ''}.`, click: () => set('prompt', promptWithSearch(v.prompt || '', k.description || '', k.collections || [], info, choice)) } as FormField]
+        : [{ type: 'note', text: `No search instructions: the agent needs a document collection and the ${SEARCH_TOOL} tool.` } as FormField]),
+      { type: 'note', text: 'Saved to KAP at once and used by the next job. KAP keeps no earlier version.' },
+    ],
+    validate: () => '',
+    finish: save,
   };
 }
 

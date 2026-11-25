@@ -11,9 +11,23 @@ import { kapAll, kapGet, type KapPage } from '@/api/kap';
 import { createStore } from '@/engine/store';
 import { agentFactoryStore, isAfTenant } from '@/v35/data/agentFactory';
 import { useLiveLoad } from '@/v35/live';
-import { grantsOf, liveOpts, mergeAgents, toAgent, type KapAgent, type KapAgentSchema, type KapCollection, type KapJob, type KapModelProvider, type LiveOpts, type LiveTest } from './fromKap';
+import { collectionSearch, emptyCache, GROUP_FILES, kindOf, type KapCollection as KapDataCollection, type KapFile, type KapPipeline as KapDataPipeline } from '../data/fromKap';
+import { grantsOf, liveOpts, mergeAgents, toAgent, type KapAgent, type KapAgentSchema, type KapJob, type KapModelProvider, type LiveOpts, type LiveTest } from './fromKap';
+import type { CollSearchInfo, EntityIdChoice } from './searchBlock';
 
-export const agentsLiveStore = createStore<{ opts: LiveOpts; tests: Record<string, LiveTest> }>(() => ({ opts: { collections: [], models: [], schemas: [], tools: [] }, tests: {} }));
+export const agentsLiveStore = createStore<{ opts: LiveOpts; tests: Record<string, LiveTest>; choices: Record<string, EntityIdChoice> }>(() => ({ opts: { collections: [], models: [], schemas: [], tools: [], search: {} }, tests: {}, choices: {} }));
+
+/** Search info per collection name (kind, searchable status, derived group ids), from KAP collections, pipelines and file paths. */
+export function searchInfo(colls: KapDataCollection[], pipes: KapDataPipeline[] | null, paths: Record<string, { paths: string[]; total: number }>): Record<string, CollSearchInfo> {
+  const cache = { ...emptyCache(), loaded: true, collections: colls, pipelines: pipes, groupPaths: paths };
+  return Object.fromEntries(
+    colls.map((c) => {
+      const kind = kindOf(c, pipes);
+      const { status, groups } = collectionSearch(cache, c);
+      return [c.name, { id: c.id, kind, ok: status.ok, missing: status.missing, groups: groups.ids }];
+    }),
+  );
+}
 
 export const LIVE_KEY = 'af-agents';
 
@@ -36,10 +50,19 @@ export async function loadAgents(tenantId: string, tenantKey: string) {
   const opt = <T,>(p: Promise<T[]>) => p.catch(() => null);
   const [agents, colls, models, schemas] = await Promise.all([
     kapAll<KapAgent>(tenantId, 'agents'),
-    opt(kapAll<KapCollection>(tenantId, 'collections')),
+    opt(kapAll<KapDataCollection>(tenantId, 'collections')),
     opt(kapAll<KapModelProvider>(tenantId, 'model-providers')),
     opt(kapAll<KapAgentSchema>(tenantId, 'agent-schemas')),
   ]);
+  const pipes = await opt(kapAll<KapDataPipeline>(tenantId, 'pipelines'));
+  // file paths of document collections, for their document group ids (search instructions)
+  const paths: Record<string, { paths: string[]; total: number }> = {};
+  await Promise.all(
+    (colls || []).filter((c) => kindOf(c, pipes) === 'document').map(async (c) => {
+      const fs = await opt(kapAll<KapFile>(tenantId, `collections/${c.id}/files`, { sort: 'name' }, GROUP_FILES));
+      if (fs) paths[c.id] = { paths: fs.map((x) => x.source_path), total: fs.length };
+    }),
+  );
   const now = Date.now();
   const jobs = await Promise.all(agents.map((a) => recentJobs(tenantId, a.id, now)));
   const mapped = agents.map((a, i) => toAgent(a, jobs[i].jobs, jobs[i].n7, now));
@@ -50,6 +73,7 @@ export async function loadAgents(tenantId: string, tenantKey: string) {
   });
   agentsLiveStore.update((s) => {
     s.opts = liveOpts(agents, colls, models, schemas);
+    s.opts.search = colls ? searchInfo(colls, pipes, paths) : {};
   });
 }
 

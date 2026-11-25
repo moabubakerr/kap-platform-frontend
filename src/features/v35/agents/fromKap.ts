@@ -11,6 +11,7 @@
  */
 import type { FormValues } from '@/engine/dialogs';
 import type { Agent, AgentCfg, AfMetrics, Version } from '@/v35/data/agentFactory';
+import type { CollSearchInfo } from './searchBlock';
 
 // ---------------------------------------------------------------- wire types (KAP OpenAPI)
 export type KapAgentType = 'workflow' | 'planner_and_executor';
@@ -97,6 +98,8 @@ export interface LiveOpts {
   schemas: string[];
   /** tool names seen in agents' allowed_tools */
   tools: string[];
+  /** agent search info per collection name (kind, searchable, group ids) */
+  search?: Record<string, CollSearchInfo>;
 }
 
 export const TYPE_L: Record<KapAgentType, string> = { workflow: 'Workflow (one structured model call)', planner_and_executor: 'Planner and executor (tools loop)' };

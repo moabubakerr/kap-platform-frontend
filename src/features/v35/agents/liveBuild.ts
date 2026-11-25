@@ -10,6 +10,7 @@ import { wfUsing, type Agent } from '@/v35/data/agentFactory';
 import type { AgentsCtx, ListFilters } from './build';
 import { fmtSecs, JOB_ST, KAP_LIMITS, kapOf, relTime, TYPE_L, TYPE_SHORT, type KapEdit, type KapJob, type LiveOpts, type LiveTest } from './fromKap';
 import { stP } from './logic';
+import { ENTITY_MODE_L, entityIdFor, needsSearch, SEARCH_TOOL, searchWarnings, type EntityIdChoice } from './searchBlock';
 
 export interface AgentsLiveCtx {
   opts: LiveOpts;
@@ -17,8 +18,12 @@ export interface AgentsLiveCtx {
   /** first load from KAP in progress */
   loading: boolean;
   now: number;
+  /** search entity id setting per KAP agent id (this browser only) */
+  choice: (kapId: string) => EntityIdChoice;
   a: {
     edit: (a: Agent, what: KapEdit) => void;
+    /** change the search entity id setting */
+    searchSetting: (a: Agent) => void;
     remove: (a: Agent) => void;
     test: (a: Agent) => void;
   };
@@ -95,10 +100,14 @@ export function liveAgentSections(c: AgentsCtx, a: Agent, tab: string, setTab: (
   const K = k.agent;
   const upd = canUpd(c, a.id);
   const ed = (what: KapEdit, l = 'Edit'): Action[] => (upd ? [act(l, () => L.a.edit(a, what))] : []);
+  const info = L.opts.search ?? {};
+  const choice = L.choice(K.id);
+  const warn: Section[] = searchWarnings(K.allowed_tools || [], K.collections || [], info, choice).map((w) => ({ callout: w }));
 
   if (tab === 'overview') {
     const ws = wfUsing(c.D, a.id);
     return [
+      ...warn,
       {
         form: true,
         sacts: (upd ? [act('Edit configuration', () => setTab('config'))] : []).concat(canDel(c, a.id) ? [act('Delete', () => L.a.remove(a), 'ghost')] : []),
@@ -119,7 +128,9 @@ export function liveAgentSections(c: AgentsCtx, a: Agent, tab: string, setTab: (
   if (tab === 'config') {
     const lim = (key: (typeof KAP_LIMITS)[number][0]) => (K[key] != null ? String(K[key]) : 'KAP default');
     const cfg = K.config || {};
+    const search = needsSearch(K.allowed_tools || [], K.collections || [], info);
     return [
+      ...warn,
       { callout: 'Live configuration in KAP. Each change is saved to KAP at once and applies to the next job. KAP keeps one configuration per agent: no drafts, versions or approvals.' },
       {
         form: true,
@@ -132,6 +143,20 @@ export function liveAgentSections(c: AgentsCtx, a: Agent, tab: string, setTab: (
         rows: [
           fr('System prompt', K.system_prompt_is_set ? 'Set' : 'Not set', 'KAP stores the prompt but never returns it; editing replaces it', ed('system_prompt', K.system_prompt_is_set ? 'Replace' : 'Set')),
           fr('Model', K.model_ref, '', ed('model_ref', 'Change')),
+          fr(
+            'Search instructions',
+            search ? 'For ' + K.collections.filter((n) => info[n]?.kind !== 'indicators').join(', ') : 'Not needed',
+            search
+              ? 'The system prompt should pin the ' + SEARCH_TOOL + ' fields. KAP does not return the prompt: use Insert search instructions when you replace it.'
+              : 'Only for agents with a document collection and the ' + SEARCH_TOOL + ' tool',
+            search ? ed('system_prompt', 'Replace prompt') : [],
+          ),
+          fr(
+            'Search entity id',
+            choice.mode === 'fixed' ? choice.value || '(empty)' : ENTITY_MODE_L.group,
+            (choice.mode === 'group' ? 'Uses ' + (K.collections.map((n) => entityIdFor(choice, info[n]?.groups ?? [])).filter(Boolean).join(', ') || 'no group found yet') + ' · ' : '') + 'Kept in this browser only (console setting, not in KAP)',
+            upd ? [act('Change', () => L.a.searchSetting(a))] : [],
+          ),
         ],
       },
       ...(K.type === 'workflow'
@@ -168,14 +193,28 @@ export function liveAgentSections(c: AgentsCtx, a: Agent, tab: string, setTab: (
   if (tab === 'knowledge') {
     const inv = new Map((c.af.mcp.servers || []).flatMap((s) => s.tools.map((t) => [t.n, s.n] as [string, string])));
     return [
+      ...warn,
       {
         title: 'Collections',
         sacts: ed('collections'),
-        note: 'At most two collections per agent in KAP.',
+        note: 'At most two collections per agent in KAP. Document groups are derived from the files\' folders, not read from KAP.',
         empty: 'No collections assigned. The agent can still use tools.',
-        cols: ['Collection'],
+        cols: ['Collection', 'Kind', 'Searchable by agents', 'Document groups'],
         mode: 'inline',
-        rows: K.collections.map((n) => row('kc:' + n, [cell(n, { m: true })], [act('Collections', c.go.collections)])),
+        rows: K.collections.map((n) => {
+          const i = info[n];
+          const doc = i?.kind === 'document';
+          return row(
+            'kc:' + n,
+            [
+              cell(n, { m: true }),
+              cell(!i ? '—' : doc ? 'Documents' : 'Indicators'),
+              doc ? cell(i.ok ? '✓ Yes' : '⚠ Not yet', { sub: i.ok ? '' : i.missing.join('; ') }) : cell('—'),
+              doc ? cell(i.groups.length ? i.groups.slice(0, 2).join(', ') + (i.groups.length > 2 ? ' …' : '') : 'None found', { m: true }) : cell('—'),
+            ],
+            [act('Open collection', () => c.go.collection(n))],
+          );
+        }),
       },
       {
         title: 'Allowed tools',

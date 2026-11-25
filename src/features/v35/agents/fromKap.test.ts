@@ -206,7 +206,7 @@ describe('live screens', () => {
     const B = initialBusinessData();
     const go = Object.fromEntries(['agents', 'agent', 'evalsets', 'evalset', 'workflow', 'collections', 'collection', 'dataset', 'document', 'entities', 'tools', 'policies', 'audit', 'run', 'monitoring', 'playground'].map((k) => [k, vi.fn()])) as unknown as AgentsCtx['go'];
     const a = new Proxy({}, { get: (tg: Record<string, unknown>, k: string) => (tg[k] ??= vi.fn()) }) as unknown as AgentsCtx['a'];
-    const live: AgentsLiveCtx = { opts: { collections: [], models: [], schemas: [], tools: [] }, tests: {}, loading: false, now: NOW, a: { edit: vi.fn(), remove: vi.fn(), test: vi.fn() } };
+    const live: AgentsLiveCtx = { opts: { collections: [], models: [], schemas: [], tools: [] }, tests: {}, loading: false, now: NOW, choice: () => ({ mode: 'group', value: '' }), a: { edit: vi.fn(), searchSetting: vi.fn(), remove: vi.fn(), test: vi.fn() } };
     const c: AgentsCtx = {
       t: 'sandbox',
       TN: 'sandbox',

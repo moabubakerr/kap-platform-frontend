@@ -6,7 +6,7 @@
  * session-only where it is shown or changed.
  */
 import { act, cell, fr, kv } from '@/engine/build';
-import type { FormField } from '@/engine/dialogs';
+import type { FormField, FormValues } from '@/engine/dialogs';
 import type { Action, DsStatus, PageHead, Row, ScreenModel, Section } from '@/engine/types';
 import {
   accessSections, COLLECTION_TABS, DATASET_TABS, datasetScreen, denied, derive, DOCUMENT_TABS, documentScreen, documentsScreen, dsPill, entitiesScreen, ENTITY_TABS, fmt, openRow,
@@ -14,9 +14,10 @@ import {
 } from './build';
 import {
   ENTITY_OFF, MAX_DOCS, SYNC_OPTS, ago, bytes, checkCollection, checkEntityTypeName, checkObservation, collectionOfDataset, collectionsUsingType, docIds, docIdOf, kindOf, obsKey, obsSource, obsStatus, obsValue, pageKey, periodLabel,
-  procStatus, schemaWithAttr, schemaWithoutAttr, stateLabel,
-  type CollectionForm, type KapCollection, type KapFile, type KapObservation,
+  procStatus, schemaWithAttr, schemaWithoutAttr, stateLabel, chatModels, collectionSearch, defaultChat, GROUP_FILES, searchFix,
+  type CollectionForm, type KapCache, type KapCollection, type KapFile, type KapObservation,
 } from './fromKap';
+import { checkSearchSettings, DEPTH_MAX, DEPTH_MIN, FALLBACK_TYPE, hasSummaryTask, PREFERRED_TYPE, searchSettingsOf, type SearchSettings } from './search';
 import type { UdFilters } from './session';
 
 const enc = encodeURIComponent;
@@ -59,11 +60,44 @@ function contentsOf(lv: LiveHub, k: KapCollection): string {
 }
 
 // ================================================================== collection create / edit
+export const AUTO_TYPE = 'Automatic (generic document grouping)';
+export const YES_NO = ['Yes', 'No'];
+
+/** The Search section of the collection form (document collections). */
+export function searchFields(C: KapCache, k: KapCollection | null): FormField[] {
+  const s = searchSettingsOf(k?.entity, defaultChat(C), !k);
+  const types = C.entityTypes.map((e) => e.name);
+  const models = chatModels(C);
+  const noSummary = (C.pipelines ?? []).filter((p) => p.kind === 'document' && !hasSummaryTask(p.stages)).map((p) => p.name);
+  return [
+    { type: 'note', tone: 'info', label: 'Search', text: 'Document collections only (ignored for indicator pipelines). Agents search documents with hybrid_search, which finds groups of documents and their summaries. KAP groups the files by folder and summarizes each group with a chat model.' },
+    { k: 'search', label: 'Make this collection searchable by agents', type: 'select', opts: YES_NO, val: s.on ? 'Yes' : 'No', hint: 'No: KAP does not group or summarize the files, and hybrid_search fails on this collection.' },
+    { k: 'entityType', label: 'Entity type of the document groups', type: 'select', opts: [AUTO_TYPE, ...new Set([...(s.typeRef ? [s.typeRef] : []), ...types])], val: s.typeRef || AUTO_TYPE, hint: `Automatic: ${PREFERRED_TYPE} when it exists, else another generic type, else KAP gets a new type ${FALLBACK_TYPE.name}.` },
+    { k: 'depth', label: 'Group by folder · depth', type: 'num', val: String(s.depth), hint: `${DEPTH_MIN}–${DEPTH_MAX}. Depth 1: one group per top folder (samples/report.pdf → group "samples"). Per-file grouping needs a KAP template variable that is not documented yet, so it is not offered.` },
+    { k: 'root', label: 'Collection root', type: 'text', val: s.root, hint: 'Folders are counted from here, relative to the connector prefix. "/" = the whole collection.' },
+    models.length
+      ? { k: 'model', label: 'Summary model', type: 'select', opts: [...new Set([s.model, ...models])], val: s.model, hint: 'Chat model provider that writes the group summaries.' }
+      : { k: 'model', label: 'Summary model', type: 'text', val: s.model, hint: 'Name of a chat model provider (the list could not be read).' },
+    { k: 'prompt', label: 'Summary prompt', type: 'textarea', rows: 4, val: s.prompt, hint: 'Used for the initial, refine and merge steps of the summary.' },
+    ...(noSummary.length ? [{ type: 'note', tone: 'warn', text: `These document pipelines have no summary step: ${noSummary.join(', ')}. A collection that uses one is not searchable until it has one (Fix on the collection page, or edit the pipeline).` } as FormField] : []),
+  ];
+}
+
+/** Search settings from the collection form's values. */
+export function searchOfValues(v: FormValues): SearchSettings {
+  return {
+    on: v.search !== 'No',
+    typeRef: !v.entityType || v.entityType === AUTO_TYPE ? '' : String(v.entityType),
+    root: String(v.root ?? '/').trim() || '/',
+    depth: Number(String(v.depth ?? '1').trim() || '1'),
+    model: String(v.model ?? '').trim(),
+    prompt: String(v.prompt ?? '').trim(),
+  };
+}
+
 export function collectionForm(h: Hub, k: KapCollection | null) {
   const lv = h.live!;
   const C = lv.cache;
-  const types = C.entityTypes.map((e) => e.name);
-  const cur = k?.entity?.enabled && k.entity.entity_type_ref ? k.entity.entity_type_ref : ENTITY_OFF;
   const fields: FormField[] = [
     ...(k ? [] : [{ k: 'name', label: 'Name', type: 'text', ph: 'e.g. supplier_contracts', hint: '4–32 letters, digits and underscores. Agents refer to collections by name.' } as FormField]),
     C.pipelines
@@ -73,21 +107,57 @@ export function collectionForm(h: Hub, k: KapCollection | null) {
       ? { k: 'connectors', label: 'Connectors', type: 'chips', opts: C.connectors.map((c) => c.name), val: k?.connectors ?? [] }
       : { k: 'connectors', label: 'Connectors', type: 'text', val: (k?.connectors ?? []).join(', '), hint: 'Connector names, separated by commas (the connector list could not be read).' },
     { k: 'sync', label: 'Sync strategy', type: 'select', opts: SYNC_OPTS, val: k?.sync_strategy ?? 'unique_name', hint: 'When files from different connectors have the same path: unique_name keeps both, overwrite keeps one.' },
-    { k: 'entity', label: 'Entity extraction', type: 'select', opts: [ENTITY_OFF, ...types], val: cur, hint: 'Groups the files into entities of this type. Other entity rules of the collection are kept.' },
-    { type: 'note', tone: 'info', text: 'KAP collections have no description or retrieval settings: the pipeline decides how files are processed and indexed.' },
+    ...searchFields(C, k),
+    { type: 'note', tone: 'info', text: 'KAP collections have no description or retrieval settings: the pipeline decides how files are processed and indexed. Changing the search settings reprocesses the collection\'s files.' },
   ];
   h.ui.form(k ? `Edit collection · ${k.name}` : 'Create collection', fields, k ? 'Save' : 'Create', (v) => {
+    const pipeline = String(v.pipeline ?? '').trim();
+    const doc = kindOf({ ...(k ?? ({} as KapCollection)), pipeline_ref: pipeline }, C.pipelines) === 'document';
     const f: CollectionForm = {
       name: k ? k.name : String(v.name ?? '').trim(),
-      pipeline: String(v.pipeline ?? '').trim(),
+      pipeline,
       connectors: Array.isArray(v.connectors) ? v.connectors : String(v.connectors ?? '').split(',').map((s) => s.trim()).filter(Boolean),
       sync: String(v.sync ?? ''),
-      entity: String(v.entity ?? ENTITY_OFF),
+      // indicator collections: no document search; a new one gets no entity block, an edited one keeps its own
+      ...(doc ? { search: searchOfValues(v) } : k ? {} : { entity: ENTITY_OFF }),
     };
-    const err = checkCollection(f, !k, C.collections.map((c) => c.name));
+    const err = checkCollection(f, !k, C.collections.map((c) => c.name)) || (f.search ? checkSearchSettings(f.search) : '');
     if (err) return err;
     return k ? lv.updateCollection(k.name, f) : lv.createCollection(f);
   });
+}
+
+/** "Fix": confirm the changes that make a document collection searchable by agents, then send them. */
+export function fixSearchConfirm(h: Hub, k: KapCollection) {
+  const lv = h.live!;
+  const fx = searchFix(lv.cache, k);
+  if (fx.err) return h.ui.confirm(`Make ${k.name} searchable by agents`, fx.err, [], 'Close', () => {});
+  const items: { a: string; b?: string; c?: string }[] = [
+    ...(fx.createType ? [{ a: fx.typeRef, b: 'New entity type', c: FALLBACK_TYPE.description }] : []),
+    ...(fx.stages ? [{ a: k.pipeline_ref, b: 'Pipeline', c: `Add a summarize step (summary task, ${defaultChat(lv.cache)}) before embedding. Parser routes and other stages are kept.` }] : []),
+    ...fx.others.map((n) => ({ a: n, b: 'Also reprocessed', c: `Uses pipeline ${k.pipeline_ref}` })),
+    ...(fx.entity ? [{ a: k.name, b: 'Collection', c: `Group documents by folder (depth ${(fx.entity.boundary as { folder_depth?: number })?.folder_depth ?? 1}) as ${fx.typeRef}, summaries by ${(fx.entity.summary as { model_ref?: string })?.model_ref}` }] : []),
+  ];
+  const body = `KAP accepts these changes and reprocesses the files.${fx.stages ? ` Changing a pipeline reprocesses every collection that uses it${fx.others.length ? `: ${fx.others.length} other collection${fx.others.length === 1 ? '' : 's'} listed below` : ''}.` : ''}`;
+  h.ui.confirm(`Make ${k.name} searchable by agents?`, body, items, 'Apply in KAP', () => lv.fixSearch(k.name));
+}
+
+/** Overview rows: searchable-by-agents status (with Fix) and the derived group ids. */
+function searchRows(h: Hub, k: KapCollection): Row[] {
+  const lv = h.live!;
+  const { status, groups, sampled } = collectionSearch(lv.cache, k);
+  const fix = !status.ok && h.acc.canData && status.summary !== null ? [act('Fix', () => fixSearchConfirm(h, k))] : [];
+  const g = groups.ids;
+  const gsub = [
+    `Derived from the template ${groups.template} and the folders of the files${sampled ? ` (first ${fmt(GROUP_FILES)} files)` : ''}, not read from KAP`,
+    groups.rootFiles ? `${fmt(groups.rootFiles)} file${groups.rootFiles === 1 ? '' : 's'} directly in the root (group id not confirmed)` : '',
+    groups.outside ? `${fmt(groups.outside)} outside the collection root` : '',
+    groups.known ? '' : 'The template uses variables the console does not know',
+  ].filter(Boolean).join(' · ');
+  return [
+    fr('Searchable by agents', status.ok ? '✓ Yes' : '⚠ Not yet', status.ok ? 'Document grouping is on and the pipeline summarizes the groups (hybrid_search)' : `Missing: ${status.missing.join('; ')}`, fix),
+    fr('Document groups', !k.entity?.enabled ? '—' : g.length ? (g.length > 4 ? `${g.slice(0, 4).join(', ')} … (${g.length})` : g.join(', ')) : 'No folders found', k.entity?.enabled ? gsub : 'Grouping is off'),
+  ];
 }
 
 // ================================================================== COLLECTIONS
@@ -238,6 +308,7 @@ export function liveCollectionScreen(h: Hub, id: string, tab0: string | undefine
           fr('Pipeline', k.pipeline_ref, pipe ? `${pipe.kind === 'indicators' ? 'Indicator metrics' : 'Document'} pipeline${pipe.embedding_model_ref ? ` · embedding ${pipe.embedding_model_ref}` : ''}` : 'Pipeline details could not be read', [act('Open', () => ui.go(`pipelines/${enc(k.pipeline_ref)}`))]),
           fr('Connectors', k.connectors.join(', ') || '—', `Sync strategy: ${k.sync_strategy}`),
           fr('Entity extraction', k.entity?.enabled ? `On · ${k.entity.entity_type_ref ?? '—'}` : 'Off', k.entity?.enabled ? 'Files are grouped into entities of this type' : '', [act('View', () => ui.go('entities'))]),
+          ...(kind === 'document' ? searchRows(h, k) : []),
           fr('Access', x.label(c.id) || 'No access policy', 'Kept in this console only (session)', [act('Open Access & Usage', () => ui.go(`${base}/access`))]),
           fr('Created', day(k.created_at), `Updated ${ago(k.updated_at)}`),
         ],
@@ -279,6 +350,7 @@ export function liveCollectionScreen(h: Hub, id: string, tab0: string | undefine
         rows:
           kind === 'document'
             ? [
+                ...searchRows(h, k),
                 fr('Embedding model', pipe?.embedding_model_ref || '—', `Set by pipeline ${k.pipeline_ref}`),
                 fr('Search mode, reranker, results per query, minimum relevance', '—', 'KAP has no per-collection search settings'),
               ]

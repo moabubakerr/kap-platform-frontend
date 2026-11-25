@@ -8,6 +8,7 @@ import {
 } from './fromKap';
 import { kindOf, nextRunId, pipeDgm, stageCfg } from './logic';
 import { connectorWizard, typeOfChoice, SOURCE_TYPE_OPTS } from './liveWizards';
+import { SUMMARY_PROMPT } from '../data/search';
 
 const NOW = Date.parse('2026-11-24T12:00:00Z');
 const ago = (s: number) => new Date(NOW - s * 1000).toISOString();
@@ -237,12 +238,25 @@ describe('pipeline bodies', () => {
       kind: 'document',
       stages: [
         { name: 'parse', type: 'parser', routes: [{ match: { extensions: ['pdf'] }, parser: { provider: 'pdf', output: 'markdown' } }] },
-        { name: 'transform', type: 'transformer', config: { model_ref: 'chat_default', tasks: [{ name: 'summary', enabled: true }] } },
+        { name: 'summarize_document', type: 'transformer', config: { model_ref: 'chat_default', tasks: [{ name: 'summary', enabled: true, config: { initial_prompt: SUMMARY_PROMPT, refine_prompt: SUMMARY_PROMPT, merge_prompt: SUMMARY_PROMPT } }] } },
         { name: 'embed', type: 'embedding', config: { model_ref: 'embed_default', chunking: { chunk_size: 600, overlap: 60 } } },
       ],
     });
     const i = toKapPipelineCreate({ ...pipelineValues(null), name: 'ind', kind: 'indicators', mode: 'snapshot', embed: 'embed_default' });
     expect(i).toEqual({ name: 'ind', kind: 'indicators', mode: 'snapshot', embedding_model_ref: 'embed_default', stages: [{ name: 'load_csv', type: 'csv_loader', config: { files: { 'registry*.csv': 'registry', 'observations*.csv': 'observations' } } }] });
+  });
+
+  it('summarizes new document pipelines by default and keeps stored summary tasks', () => {
+    expect(pipelineValues(null)).toMatchObject({ tasks: ['summary'], chat: 'chat_default', prompt: SUMMARY_PROMPT });
+    // unchanged prompt: the stored task (without prompts) is kept as it is
+    const keep = toKapPipelinePatch(docPipe, { ...pipelineValues(docPipe), chunk: '900' }) as { stages: KapPipeline['stages'] };
+    expect(keep.stages[1]).toEqual(docPipe.stages[1]);
+    // a changed prompt is a change, and is written to all three prompt fields
+    const p = toKapPipelinePatch(docPipe, { ...pipelineValues(docPipe), prompt: 'Short summary.' }) as { stages: KapPipeline['stages'] };
+    const tr = p.stages[1] as Extract<KapPipeline['stages'][number], { type: 'transformer' }>;
+    expect(tr.config.tasks[0]).toEqual({ name: 'summary', enabled: true, config: { initial_prompt: 'Short summary.', refine_prompt: 'Short summary.', merge_prompt: 'Short summary.' } });
+    expect(tr.config.tasks[1]).toEqual({ name: 'metadata', enabled: true });
+    expect(validatePipeline(1, { ...pipelineValues(null), name: 'contracts', embed: 'embed_default', prompt: ' ' }, [], false)).toMatch(/summary prompt/);
   });
 
   it('does not patch (and reprocess) an unchanged pipeline', () => {

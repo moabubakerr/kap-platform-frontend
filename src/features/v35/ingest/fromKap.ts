@@ -14,6 +14,7 @@
 import type { FormValues } from '@/engine/dialogs';
 import type { IngestTenant, PipeCfg, Pipeline, Run, RunStatus, Source, SourceStatus, Stage } from '@/v35/data/ingest';
 import { triggerOf } from './runView';
+import { DEFAULT_CHAT, SUMMARIZE_STAGE, SUMMARY_PROMPT, summaryTask } from '../data/search';
 
 // ------------------------------------------------------------------ KAP records (subset of the OpenAPI schemas)
 export interface KapSecretStatus {
@@ -604,9 +605,15 @@ export const IMG_EXTS = ['jpeg', 'jpg', 'png', 'tiff', 'tif'];
 export const TASKS = ['summary', 'metadata'];
 export const NO_MODEL = 'None';
 
+/** The summary prompt of a transformer task (the initial prompt; KAP's default when the task has none). */
+const promptOf = (t: { config?: unknown } | undefined): string => {
+  const p = (t?.config as { initial_prompt?: unknown } | undefined)?.initial_prompt;
+  return typeof p === 'string' && p ? p : SUMMARY_PROMPT;
+};
+
 /** Wizard values for a KAP pipeline (new, or prefilled from KAP). */
 export function pipelineValues(p: KapPipeline | null): FormValues {
-  if (!p) return { name: '', kind: 'document', exts: ['pdf', 'docx'], imgs: [], vision: NO_MODEL, tasks: [], chat: NO_MODEL, embed: '', chunk: '800', overlap: '120', mode: 'delta', registry: 'registry*.csv', observations: 'observations*.csv' };
+  if (!p) return { name: '', kind: 'document', exts: ['pdf', 'docx'], imgs: [], vision: NO_MODEL, tasks: ['summary'], chat: DEFAULT_CHAT, prompt: SUMMARY_PROMPT, embed: '', chunk: '800', overlap: '120', mode: 'delta', registry: 'registry*.csv', observations: 'observations*.csv' };
   const routes = p.stages.flatMap((s) => (s.type === 'parser' ? s.routes : []));
   const tr = p.stages.find((s) => s.type === 'transformer') as Extract<KapStage, { type: 'transformer' }> | undefined;
   const em = p.stages.find((s) => s.type === 'embedding') as Extract<KapStage, { type: 'embedding' }> | undefined;
@@ -621,6 +628,7 @@ export function pipelineValues(p: KapPipeline | null): FormValues {
     vision: String(vis?.parser.config?.model_ref ?? NO_MODEL),
     tasks: tr ? tr.config.tasks.filter((x) => x.enabled !== false).map((x) => x.name) : [],
     chat: tr?.config.model_ref ?? NO_MODEL,
+    prompt: promptOf(tr?.config.tasks.find((x) => x.name === 'summary')),
     embed: (p.kind === 'indicators' ? p.embedding_model_ref : em?.config.model_ref) ?? '',
     chunk: String(em?.config.chunking?.chunk_size ?? 800),
     overlap: String(em?.config.chunking?.overlap ?? 120),
@@ -646,6 +654,7 @@ export function validatePipeline(step: number, v: FormValues, existing: string[]
     if (!(v.exts || []).length && !(v.imgs || []).length) return 'Choose at least one file type to parse.';
     if ((v.imgs || []).length && (!v.vision || v.vision === NO_MODEL)) return 'Images are parsed by a vision model: choose a chat model.';
     if ((v.tasks || []).length && (!v.chat || v.chat === NO_MODEL)) return 'Summary and metadata need a chat model.';
+    if ((v.tasks || []).includes('summary') && !String(v.prompt ?? '').trim()) return 'Enter the summary prompt.';
     const cs = Number(v.chunk);
     const ov = Number(v.overlap);
     if (!Number.isInteger(cs) || cs < 50 || cs > 4096) return 'Chunk size: 50–4096 tokens.';
@@ -682,9 +691,19 @@ export function toKapStages(v: FormValues, orig?: KapPipeline | null): KapStage[
   if ((v.tasks || []).length) {
     const old = o.find((s) => s.type === 'transformer') as Extract<KapStage, { type: 'transformer' }> | undefined;
     stages.push({
-      name: nameOf('transformer', 'transform'),
+      name: nameOf('transformer', SUMMARIZE_STAGE),
       type: 'transformer',
-      config: { ...(old?.config ?? {}), model_ref: v.chat, tasks: (v.tasks as string[]).map((n) => ({ ...(old?.config.tasks.find((t) => t.name === n) ?? {}), name: n, enabled: true })) },
+      config: {
+        ...(old?.config ?? {}),
+        model_ref: v.chat,
+        tasks: (v.tasks as string[]).map((n) => {
+          const ot = old?.config.tasks.find((t) => t.name === n);
+          if (n !== 'summary') return { ...(ot ?? {}), name: n, enabled: true };
+          // summary: keep the stored task (and its refine/merge prompts) while the prompt is unchanged
+          const p = String(v.prompt ?? '').trim() || SUMMARY_PROMPT;
+          return ot && promptOf(ot) === p ? { ...ot, name: n, enabled: true } : { ...(ot ?? {}), ...summaryTask(p), config: { ...((ot?.config as object) ?? {}), ...summaryTask(p).config } };
+        }),
+      },
     });
   }
   const oldE = o.find((s) => s.type === 'embedding') as Extract<KapStage, { type: 'embedding' }> | undefined;
@@ -724,7 +743,7 @@ export function toKapPipelinePatch(p: KapPipeline, v: FormValues): Record<string
     JSON.stringify(
       x.kind === 'indicators'
         ? [String(x.registry).trim(), String(x.observations).trim()]
-        : [[...(x.exts || [])].sort(), [...(x.imgs || [])].sort(), (x.imgs || []).length ? x.vision : '', [...(x.tasks || [])].sort(), (x.tasks || []).length ? x.chat : '', x.embed, String(x.chunk), String(x.overlap)],
+        : [[...(x.exts || [])].sort(), [...(x.imgs || [])].sort(), (x.imgs || []).length ? x.vision : '', [...(x.tasks || [])].sort(), (x.tasks || []).length ? x.chat : '', (x.tasks || []).includes('summary') ? String(x.prompt ?? '').trim() || SUMMARY_PROMPT : '', x.embed, String(x.chunk), String(x.overlap)],
     );
   if (norm(v) !== norm(cur)) out.stages = toKapStages(v, p);
   if (p.kind === 'indicators') {

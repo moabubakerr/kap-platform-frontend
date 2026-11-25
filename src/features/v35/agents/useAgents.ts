@@ -28,7 +28,8 @@ import { liveSave, type Live } from '@/v35/live';
 import { kapOf, mergeAgents, toAgent,toJobBody, toKapCreate, toKapPatch, type KapAgent, type LiveAgent } from './fromKap';
 import { agentsLiveStore, useAgentsLive } from './live';
 import type { AgentsLiveCtx } from './liveBuild';
-import { EDIT_TITLE, liveAgentWizard, liveEditFields, liveTestFields } from './liveForms';
+import { choiceOfValues, EDIT_TITLE, entityIdFields, liveAgentWizard, liveEditFields, liveTestFields, systemPromptWizard } from './liveForms';
+import { loadChoice, needsSearch, saveChoice, type EntityIdChoice } from './searchBlock';
 
 /** View state that survives navigation between tabs (prototype afTest / afFocus / afLastCase). */
 export const agentUiStore = createStore<{ tests: Record<string, TestResult>; focus: Focus | null; lastCase: AgentsCtx['lastCase'] }>(() => ({ tests: {}, focus: null, lastCase: null }));
@@ -612,15 +613,37 @@ export function useAgents(): AgentsCtx & { tenant: AfTenantKey | null; liveState
           if (oldName && oldName !== k.name) delete all.mcp.grants[T][oldName];
           all.mcp.grants[T][k.name] = next.vers[next.vers.length - 1].cfg!.tset!.slice();
         });
+      /** search entity id setting of a KAP agent (this browser only) */
+      const choiceOf = (kapId: string): EntityIdChoice => agentsLiveStore.get().choices[kapId] ?? loadChoice(kapId);
+      const setChoice = (kapId: string, c: EntityIdChoice) => {
+        saveChoice(kapId, c);
+        agentsLiveStore.update((s) => {
+          s.choices[kapId] = c;
+        });
+      };
       live = {
         opts: lv.opts,
         tests: lv.tests,
         loading: liveLoading,
         now: Date.now(),
+        choice: (kapId) => lv.choices[kapId] ?? loadChoice(kapId),
         a: {
+          searchSetting: (ag) => {
+            const K = kapA(ag);
+            const info = agentsLiveStore.get().opts.search ?? {};
+            const groups = (K.collections || []).flatMap((c) => info[c]?.groups ?? []);
+            d.form('Search entity id · ' + ag.id, entityIdFields(choiceOf(K.id), groups), 'Save', (v) => {
+              const c = choiceOfValues(v);
+              if (c.mode === 'fixed' && !c.value) return 'Enter the fixed value.';
+              setChoice(K.id, c);
+              d.toast('Search entity id kept in this browser. Use Insert search instructions in the system prompt to apply it.');
+              return '';
+            });
+          },
           edit: (ag, what) => {
             const K = kapA(ag);
-            d.form(EDIT_TITLE[what] + ' · ' + ag.id, liveEditFields(K, what, agentsLiveStore.get().opts), 'Save to KAP', (v) => {
+            const fields = liveEditFields(K, what, agentsLiveStore.get().opts);
+            const save = (v: Record<string, any>) => {
               const r = toKapPatch(K, what, v);
               if (!r.body) return r.err || 'No change.';
               const body = r.body;
@@ -637,7 +660,9 @@ export function useAgents(): AgentsCtx & { tenant: AfTenantKey | null; liveState
                   if (out && out.name !== K.name) go.agent(out.name, 'config');
                 },
               );
-            });
+            };
+            if (what === 'system_prompt') d.wizard(systemPromptWizard(K, agentsLiveStore.get().opts.search ?? {}, choiceOf(K.id), save));
+            else d.form(EDIT_TITLE[what] + ' · ' + ag.id, fields, 'Save to KAP', save);
           },
           remove: (ag) => {
             const K = kapA(ag);
@@ -704,6 +729,7 @@ export function useAgents(): AgentsCtx & { tenant: AfTenantKey | null; liveState
               },
               () => {
                 if (out) putAgent(out);
+                if (out && needsSearch(body.allowed_tools, body.collections, o.search ?? {})) setChoice((out as KapAgent).id, choiceOfValues(v));
                 d.toast('Agent ' + body.name + ' created in KAP.');
                 audit('Created agent', body.name + ' · ' + body.type + ' · ' + body.model_ref + ' · tools ' + body.allowed_tools.length + ' · collections ' + (body.collections.join(', ') || 'none') + ' · KAP');
                 go.agent(body.name, 'testing');

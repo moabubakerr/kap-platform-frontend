@@ -69,6 +69,8 @@ export interface LiveHub {
   setObsAt: (dataset: string, v: LivePage & { status: string }) => void;
   createCollection: (v: CollectionForm) => Promise<string>;
   updateCollection: (name: string, v: CollectionForm) => Promise<string>;
+  /** make a document collection searchable by agents (`searchFix`): entity type, pipeline summarize stage, entity block */
+  fixSearch: (name: string) => Promise<string>;
   deleteCollection: (name: string) => Promise<string>;
   reprocessFile: (docId: string) => Promise<string>;
   deleteFile: (docId: string) => Promise<string>;
