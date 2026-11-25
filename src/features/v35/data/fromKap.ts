@@ -10,7 +10,7 @@
  */
 import type { DhCollection, DhDataset, DhDocument, DhField, IngestPipelineRef, IngestRef, OntoAttr, OntoType, TenantData } from '@/v35/data/businessData';
 import {
-  DEFAULT_CHAT, entityBlock, FALLBACK_TYPE, groupIds, pickEntityType, sameEntity, searchableStatus, searchSettingsOf, withSummarizeStage,
+  DEFAULT_CHAT, DOC_SUMMARY_PROMPT, entityBlock, FALLBACK_TYPE, groupIds, pickEntityType, sameEntity, searchableStatus, searchSettingsOf, withSummarizeStage,
   type GroupIds, type LooseStage, type Searchable, type SearchSettings,
 } from './search';
 
@@ -591,7 +591,7 @@ export function searchFix(cache: KapCache, c: KapCollection): SearchFix {
   if (status.summary === null) return { ...base, err: `The pipeline ${c.pipeline_ref} could not be read, so its stages cannot be checked or changed here.` };
   const set = { ...searchSettingsOf(c.entity, model), on: true };
   if (status.summary === false) {
-    base.stages = withSummarizeStage(pipe!.stages ?? [], model, set.prompt).stages;
+    base.stages = withSummarizeStage(pipe!.stages ?? [], model, DOC_SUMMARY_PROMPT).stages;
     base.others = cache.collections.filter((x) => x.id !== c.id && x.pipeline_ref === c.pipeline_ref).map((x) => x.name);
   }
   if (!status.grouping) {

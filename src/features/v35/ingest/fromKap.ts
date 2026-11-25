@@ -14,7 +14,7 @@
 import type { FormValues } from '@/engine/dialogs';
 import type { IngestTenant, PipeCfg, Pipeline, Run, RunStatus, Source, SourceStatus, Stage } from '@/v35/data/ingest';
 import { triggerOf } from './runView';
-import { DEFAULT_CHAT, SUMMARIZE_STAGE, SUMMARY_PROMPT, summaryTask } from '../data/search';
+import { DEFAULT_CHAT, DOC_SUMMARY_PROMPT, SUMMARIZE_STAGE, summaryTask } from '../data/search';
 
 // ------------------------------------------------------------------ KAP records (subset of the OpenAPI schemas)
 export interface KapSecretStatus {
@@ -608,12 +608,12 @@ export const NO_MODEL = 'None';
 /** The summary prompt of a transformer task (the initial prompt; KAP's default when the task has none). */
 const promptOf = (t: { config?: unknown } | undefined): string => {
   const p = (t?.config as { initial_prompt?: unknown } | undefined)?.initial_prompt;
-  return typeof p === 'string' && p ? p : SUMMARY_PROMPT;
+  return typeof p === 'string' && p ? p : DOC_SUMMARY_PROMPT;
 };
 
 /** Wizard values for a KAP pipeline (new, or prefilled from KAP). */
 export function pipelineValues(p: KapPipeline | null): FormValues {
-  if (!p) return { name: '', kind: 'document', exts: ['pdf', 'docx'], imgs: [], vision: NO_MODEL, tasks: ['summary'], chat: DEFAULT_CHAT, prompt: SUMMARY_PROMPT, embed: '', chunk: '800', overlap: '120', mode: 'delta', registry: 'registry*.csv', observations: 'observations*.csv' };
+  if (!p) return { name: '', kind: 'document', exts: ['pdf', 'docx'], imgs: [], vision: NO_MODEL, tasks: ['summary'], chat: DEFAULT_CHAT, prompt: DOC_SUMMARY_PROMPT, embed: '', chunk: '800', overlap: '120', mode: 'delta', registry: 'registry*.csv', observations: 'observations*.csv' };
   const routes = p.stages.flatMap((s) => (s.type === 'parser' ? s.routes : []));
   const tr = p.stages.find((s) => s.type === 'transformer') as Extract<KapStage, { type: 'transformer' }> | undefined;
   const em = p.stages.find((s) => s.type === 'embedding') as Extract<KapStage, { type: 'embedding' }> | undefined;
@@ -700,7 +700,7 @@ export function toKapStages(v: FormValues, orig?: KapPipeline | null): KapStage[
           const ot = old?.config.tasks.find((t) => t.name === n);
           if (n !== 'summary') return { ...(ot ?? {}), name: n, enabled: true };
           // summary: keep the stored task (and its refine/merge prompts) while the prompt is unchanged
-          const p = String(v.prompt ?? '').trim() || SUMMARY_PROMPT;
+          const p = String(v.prompt ?? '').trim() || DOC_SUMMARY_PROMPT;
           return ot && promptOf(ot) === p ? { ...ot, name: n, enabled: true } : { ...(ot ?? {}), ...summaryTask(p), config: { ...((ot?.config as object) ?? {}), ...summaryTask(p).config } };
         }),
       },
@@ -743,7 +743,7 @@ export function toKapPipelinePatch(p: KapPipeline, v: FormValues): Record<string
     JSON.stringify(
       x.kind === 'indicators'
         ? [String(x.registry).trim(), String(x.observations).trim()]
-        : [[...(x.exts || [])].sort(), [...(x.imgs || [])].sort(), (x.imgs || []).length ? x.vision : '', [...(x.tasks || [])].sort(), (x.tasks || []).length ? x.chat : '', (x.tasks || []).includes('summary') ? String(x.prompt ?? '').trim() || SUMMARY_PROMPT : '', x.embed, String(x.chunk), String(x.overlap)],
+        : [[...(x.exts || [])].sort(), [...(x.imgs || [])].sort(), (x.imgs || []).length ? x.vision : '', [...(x.tasks || [])].sort(), (x.tasks || []).length ? x.chat : '', (x.tasks || []).includes('summary') ? String(x.prompt ?? '').trim() || DOC_SUMMARY_PROMPT : '', x.embed, String(x.chunk), String(x.overlap)],
     );
   if (norm(v) !== norm(cur)) out.stages = toKapStages(v, p);
   if (p.kind === 'indicators') {

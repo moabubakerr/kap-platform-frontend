@@ -8,7 +8,7 @@ import {
 } from './fromKap';
 import { kindOf, nextRunId, pipeDgm, stageCfg } from './logic';
 import { connectorWizard, typeOfChoice, SOURCE_TYPE_OPTS } from './liveWizards';
-import { SUMMARY_PROMPT } from '../data/search';
+import { DOC_SUMMARY_PROMPT } from '../data/search';
 
 const NOW = Date.parse('2026-11-24T12:00:00Z');
 const ago = (s: number) => new Date(NOW - s * 1000).toISOString();
@@ -238,7 +238,7 @@ describe('pipeline bodies', () => {
       kind: 'document',
       stages: [
         { name: 'parse', type: 'parser', routes: [{ match: { extensions: ['pdf'] }, parser: { provider: 'pdf', output: 'markdown' } }] },
-        { name: 'summarize_document', type: 'transformer', config: { model_ref: 'chat_default', tasks: [{ name: 'summary', enabled: true, config: { initial_prompt: SUMMARY_PROMPT, refine_prompt: SUMMARY_PROMPT, merge_prompt: SUMMARY_PROMPT } }] } },
+        { name: 'summarize_document', type: 'transformer', config: { model_ref: 'chat_default', tasks: [{ name: 'summary', enabled: true, config: { initial_prompt: DOC_SUMMARY_PROMPT, refine_prompt: DOC_SUMMARY_PROMPT, merge_prompt: DOC_SUMMARY_PROMPT } }] } },
         { name: 'embed', type: 'embedding', config: { model_ref: 'embed_default', chunking: { chunk_size: 600, overlap: 60 } } },
       ],
     });
@@ -247,7 +247,7 @@ describe('pipeline bodies', () => {
   });
 
   it('summarizes new document pipelines by default and keeps stored summary tasks', () => {
-    expect(pipelineValues(null)).toMatchObject({ tasks: ['summary'], chat: 'chat_default', prompt: SUMMARY_PROMPT });
+    expect(pipelineValues(null)).toMatchObject({ tasks: ['summary'], chat: 'chat_default', prompt: DOC_SUMMARY_PROMPT });
     // unchanged prompt: the stored task (without prompts) is kept as it is
     const keep = toKapPipelinePatch(docPipe, { ...pipelineValues(docPipe), chunk: '900' }) as { stages: KapPipeline['stages'] };
     expect(keep.stages[1]).toEqual(docPipe.stages[1]);

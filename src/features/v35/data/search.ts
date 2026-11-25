@@ -16,8 +16,16 @@
 import type { KapEntitySpec } from './fromKap';
 
 // ------------------------------------------------------------------ defaults
+/**
+ * Folder (document group) summary prompt for the collection. hybrid_search returns this one
+ * summary per folder, so it must keep every document: a "concise" prompt dropped two of three
+ * documents on the stand (25 Nov 2026); this one kept all three.
+ */
 export const SUMMARY_PROMPT =
-  'Produce a concise, source-grounded summary of the documents in Markdown. Keep facts, figures, dates, names and document references exactly as written. Do not add facts, calculations or comparisons. When documents disagree, keep both claims and name their documents.';
+  'Combine the document summaries into one Markdown text with one section per document, headed by its reference and title. Never drop a document and never merge two documents into one section. Keep every fact exactly as written: names, roles, dates, figures, units, table rows, decisions, risks and control phrases. When documents disagree, keep both claims and name their documents. Do not add facts, calculations or comparisons.';
+/** Per-document summary prompt for the pipeline's Summarize step (input to the folder summary). */
+export const DOC_SUMMARY_PROMPT =
+  'Summarise this document in Markdown. Start with its reference and title. Keep every fact exactly as written: all names, roles, dates, figures, units, table rows (including empty or "not yet reported" values), decisions, risks and any control phrase. Do not shorten lists. Do not add facts, calculations or comparisons.';
 export const DEFAULT_CHAT = 'chat_default';
 export const GROUP_TEMPLATE = '{collection_id}:{relative_folder_path}';
 /** generic grouping type of the sandbox tenant ("Generic source-document grouping without extracted metadata") */
