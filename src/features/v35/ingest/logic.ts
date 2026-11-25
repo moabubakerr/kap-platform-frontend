@@ -26,6 +26,7 @@ export function ihLoc(s: Pick<Source, 'type' | 'cfg'>): string {
     case 'S3':
       return `s3://${c.bucket}${c.base && c.base !== '/' ? c.base : ''} · ${c.endpoint}`;
     case 'Microsoft SQL Server':
+    case 'PostgreSQL':
       return `${c.server}:${c.port} / ${c.db}`;
     case 'Data warehouse · Azure Synapse':
       return `${c.endpoint} / ${c.pool}`;

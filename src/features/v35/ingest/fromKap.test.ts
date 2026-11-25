@@ -222,10 +222,11 @@ describe('connector bodies', () => {
     expect(validateConnector(3, connectorValues(s3), [], true, false)).toBe('');
   });
 
-  it('offers other source types only as session-only', () => {
+  it('offers PostgreSQL through the platform and other source types only as session-only', () => {
     expect(SOURCE_TYPE_OPTS[0]).toBe('S3 · stored in KAP');
     expect(typeOfChoice(SOURCE_TYPE_OPTS[0])).toBeNull();
-    expect(typeOfChoice(SOURCE_TYPE_OPTS[1])).toBe('Microsoft SQL Server');
+    expect(SOURCE_TYPE_OPTS[1]).toBe('PostgreSQL · read by the platform, exported to KAP');
+    expect(typeOfChoice(SOURCE_TYPE_OPTS[2])).toBe('Microsoft SQL Server');
     expect(connectorWizard({ conn: s3, mode: 'edit', existing: [], finish: async () => '' }).initial).toMatchObject({ name: 'sbx_docs', keys: 'Keep the stored keys' });
   });
 });

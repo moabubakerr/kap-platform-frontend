@@ -20,13 +20,19 @@ function withDefaults(fields: FormField[], v: FormValues): FormField[] {
 // ------------------------------------------------------------------ source type (live tenant)
 export const KAP_TYPE = 'S3 · stored in KAP';
 export const sessType = (t: string) => `${t} · not available in KAP (session only)`;
-export const SOURCE_TYPE_OPTS = [KAP_TYPE, ...SRC_TYPES.filter((t) => t !== 'S3').map(sessType)];
-/** The design's type for a choice of `SOURCE_TYPE_OPTS` (null = S3 in KAP). */
+/** PostgreSQL: the platform reads the database and exports indicator files to KAP (`pgWizards.ts`). */
+export const PG_CHOICE = 'PostgreSQL · read by the platform, exported to KAP';
+export const SOURCE_TYPE_OPTS = [KAP_TYPE, PG_CHOICE, ...SRC_TYPES.filter((t) => t !== 'S3').map(sessType)];
+/** The design's type for a choice of `SOURCE_TYPE_OPTS` (null = S3 in KAP; check `PG_CHOICE` first). */
 export const typeOfChoice = (o: string): string | null => (o === KAP_TYPE ? null : o.replace(/ · not available in KAP \(session only\)$/, ''));
 
 export const sourceTypeFields = (): FormField[] => [
   { k: 'type', label: 'Source type', type: 'select', opts: SOURCE_TYPE_OPTS },
-  { type: 'note', tone: 'info', text: 'KAP connectors read S3 buckets. Other source types are not available in KAP: you can still sketch them, but they are kept in this browser session only and their tests and runs are simulated.' },
+  {
+    type: 'note',
+    tone: 'info',
+    text: 'KAP connectors read S3 buckets. PostgreSQL databases are read by the platform, which exports indicator files into a KAP collection. Other source types are not available in KAP: you can still sketch them, but they are kept in this browser session only and their tests and runs are simulated.',
+  },
 ];
 
 // ------------------------------------------------------------------ S3 connector

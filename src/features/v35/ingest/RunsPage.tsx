@@ -8,6 +8,7 @@ import { liveIngestStore } from './liveIngest';
 import { liveRunsSection } from './LiveRunView';
 import { isConsoleRun } from './consoleRuns';
 import { isEmptyScan } from './runView';
+import { PgBanner } from './PgSourceView';
 import { useIngest } from './useIngest';
 
 /** Data Ingestion Hub · Ingestion Runs (route /runs). Live tenant: status icons and progress per run. */
@@ -30,7 +31,10 @@ export default function RunsPage() {
           const shown = c.H.runs.filter((r) => !!kapOfRun(r)).length;
           const reported = Object.values(K!.jobTotals ?? {}).reduce((a, b) => a + b, 0);
           const errs = Object.entries(K!.jobErrors ?? {});
+          const pgTotal = c.pg.state?.exportsTotal ?? 0;
+          const pgShown = c.pg.state?.exports.length ?? 0;
           const notes = [
+            pgTotal > pgShown ? `The platform reports ${pgTotal.toLocaleString('en-US')} Postgres exports; the newest ${pgShown.toLocaleString('en-US')} are shown.` : '',
             reported > shown ? `KAP reports ${reported.toLocaleString('en-US')} runs; the newest ${shown.toLocaleString('en-US')} are shown.` : '',
             ...errs.map(([p, e]) => `Could not read the runs of ${p} from KAP (${e}); the runs shown for it may be out of date.`),
           ].filter(Boolean);
@@ -55,6 +59,7 @@ export default function RunsPage() {
   return (
     <>
       <LiveBanner live={c.liveState} what="ingestion runs (KAP pipeline jobs)" />
+      <PgBanner pg={c.pg} quiet />
       {live && (
         <label className="mb-2 flex w-fit cursor-pointer items-center gap-2 text-[13px] text-ink-body">
           <input type="checkbox" checked={showEmpty} onChange={(e) => setShowEmpty(e.target.checked)} />

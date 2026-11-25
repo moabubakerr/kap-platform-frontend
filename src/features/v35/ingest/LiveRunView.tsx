@@ -10,6 +10,7 @@ import type { Section } from '@/engine/types';
 import type { Run, RunStatus } from '@/v35/data/ingest';
 import type { IngestNav } from './build';
 import { kapOfRun, runId, type KapCollection, type KapConnector, type KapJob, type KapPipeline } from './fromKap';
+import { pgOfRun } from './pgView';
 import {
   earlierWork, emptyScansLabel, foldEmptyScans, followUp, isEmptyScan, hhmm, hhmmss, isZeroRun, progressOf, runDuration, runFiles, runItems, runSteps, splitRelated, triggerOf, zeroExplanation,
   type FollowUp, type KapFileItem, type RunGroup, type RunStep, type StepState,
@@ -31,7 +32,7 @@ export function RunStatusIcon({ st, size = 16 }: { st: RunStatus; size?: number 
   return <I size={size} strokeWidth={1.75} aria-hidden className={cn('flex-none', s.cls, s.spin && 'animate-spin')} />;
 }
 
-function StatusBadge({ st }: { st: RunStatus }) {
+export function StatusBadge({ st }: { st: RunStatus }) {
   const tone =
     st === 'Succeeded' ? 'bg-success-bg text-success-fg' : st === 'Failed' ? 'bg-danger-bg text-danger-fg' : st === 'Partially succeeded' ? 'bg-warning-bg text-warning-fg' : st === 'Running' ? 'bg-info-bg text-info' : 'bg-surface-sunken text-ink-body';
   return (
@@ -64,13 +65,13 @@ export function ProgressBar({ percent, indeterminate, tone = 'info', thin }: { p
   );
 }
 
-const LinkBtn = ({ onClick, children }: { onClick: () => void; children: React.ReactNode }) => (
+export const LinkBtn = ({ onClick, children }: { onClick: () => void; children: React.ReactNode }) => (
   <button type="button" onClick={onClick} className="inline-flex items-center gap-0.5 font-medium text-brand hover:underline">
     {children}
   </button>
 );
 
-function Field({ k, children }: { k: string; children: React.ReactNode }) {
+export function Field({ k, children }: { k: string; children: React.ReactNode }) {
   return (
     <div className="min-w-0">
       <div className="text-[12px] text-ink-muted">{k}</div>
@@ -195,7 +196,7 @@ export function LiveRunOverview({ D }: { D: LiveRunData }) {
   );
 }
 
-function Stepper({ steps }: { steps: RunStep[] }) {
+export function Stepper({ steps }: { steps: RunStep[] }) {
   return (
     <ol className="flex flex-col">
       {steps.map((s, i) => {
@@ -393,6 +394,22 @@ export interface LiveRunsTableProps {
 }
 
 function RunProgressCell({ r }: { r: Run }) {
+  const pg = pgOfRun(r);
+  if (pg) {
+    if (r.st === 'Queued' || r.st === 'Running')
+      return (
+        <div className="flex min-w-[150px] flex-col gap-1">
+          <span className="text-[12.5px] text-ink-body">{pg.label}</span>
+          <ProgressBar percent={pg.percent} indeterminate={pg.status === 'queued' && !pg.percent} thin />
+        </div>
+      );
+    return (
+      <div className="flex flex-col">
+        <span className="text-ink-body">{r.inN}</span>
+        <span className="text-[12px] text-ink-muted">{r.outN}</span>
+      </div>
+    );
+  }
   const K = kapOfRun(r);
   if (!K) return <span className="text-ink-body">{`${r.inN} → ${r.outN}`}</span>;
   const active = K.state === 'waiting' || K.state === 'running';
@@ -433,6 +450,7 @@ export function LiveRunsTable({ runs, srcOf, go, canCancel, cancel, empty }: Liv
         <tbody>
           {runs.map((r) => {
             const K = kapOfRun(r);
+            const pg = pgOfRun(r);
             return (
               <tr key={r.id} onClick={() => go.run(r.id)} className="cursor-pointer border-t border-line-subtle align-top hover:bg-surface-hover">
                 <td className="whitespace-nowrap px-3 py-2.5">
@@ -448,11 +466,12 @@ export function LiveRunsTable({ runs, srcOf, go, canCancel, cancel, empty }: Liv
                 <td className="px-3 py-2.5">
                   <div className="text-ink-strong">{r.pipe}</div>
                   {K && <div className="text-[12px] text-ink-muted">{K.collection}</div>}
+                  {pg && <div className="text-[12px] text-ink-muted">{pg.collection ? `→ ${pg.collection}` : 'PostgreSQL → KAP'}</div>}
                 </td>
                 <td className="px-3 py-2.5 text-ink-body">{srcOf(r) || '—'}</td>
                 <td className="whitespace-nowrap px-3 py-2.5">
                   <div className="text-ink-body">{r.start}</div>
-                  {K && <div className="font-mono text-[12px] text-ink-muted">{hhmm(K.createdAt)}</div>}
+                  {(K || pg) && <div className="font-mono text-[12px] text-ink-muted">{hhmm(K?.createdAt ?? pg?.createdAt)}</div>}
                 </td>
                 <td className="whitespace-nowrap px-3 py-2.5 text-ink-body">{r.dur.replace(' (running)', '')}</td>
                 <td className="px-3 py-2.5">

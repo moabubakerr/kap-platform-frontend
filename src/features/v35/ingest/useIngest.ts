@@ -13,6 +13,7 @@ import { toast } from 'sonner';
 import { useBase, useScope } from '@/app/shell/AppShell';
 import { useDialogs, type FormField } from '@/engine/dialogs';
 import { kap, kapGet, type KapPage } from '@/api/kap';
+import { PG_FEATURE_MISSING } from '@/api/platformPg';
 import { useAccess } from '@/v35/access';
 import { recordAudit } from '@/v35/data/audit';
 import { liveSave, liveTenantId, useLiveLoad, type Live } from '@/v35/live';
@@ -25,14 +26,25 @@ import {
 import { markConsoleRun } from './consoleRuns';
 import { FAILED_FILE_STATES, IN_PROGRESS_STATES, runNowDecision, type RunNowDecision } from './runView';
 import { ACTIVE_REFRESH_MS, ensureJobDetail, hasActiveRun, liveIngestStore, loadIngest, setCheck } from './liveIngest';
-import { connectorWizard, kapPipeWizard, sourceTypeFields, typeOfChoice, type ConnMode } from './liveWizards';
+import { connectorWizard, kapPipeWizard, PG_CHOICE, sourceTypeFields, typeOfChoice, type ConnMode } from './liveWizards';
 import { finishRun, pipeOf, queueRun, srcOf, startRun, testConn, trigOf, type RunOpts } from './logic';
 import { pipeWizard, SAMPLE_FILES, sourceWizard, type PipeSaved, type SourceSaved } from './wizards';
+import { hasActiveExport, loadPg, PG_ACTIVE_REFRESH_MS, pgStore } from './pgLive';
+import { makePgActs, type PgActs } from './pgActions';
+import { pgOfSource, withPg, type PgState } from './pgView';
 
 const EMPTY: IngestTenant = { sources: [], pipelines: [], runs: [], pub: { colls: [], datasets: [], documents: [] }, onto: [], creds: [] };
 const AREA = 'Data Ingestion Hub';
 
-export function useIngest(): IngestCtx & { tenant: IngestTenantKey | null; liveState: Live; fetchRun: (id: string) => void } {
+/** PostgreSQL through the platform API (live tenant only). */
+export interface PgCtx {
+  on: boolean;
+  state: PgState | undefined;
+  live: Live;
+  a: PgActs;
+}
+
+export function useIngest(): IngestCtx & { tenant: IngestTenantKey | null; liveState: Live; fetchRun: (id: string) => void; pg: PgCtx } {
   const scope = useScope();
   const base = useBase();
   const nav = useNavigate();
@@ -43,9 +55,25 @@ export function useIngest(): IngestCtx & { tenant: IngestTenantKey | null; liveS
   const t = isIngestTenant(key) ? key : null;
   const raw = liveIngestStore.use();
   const K: KapIngest | undefined = t ? raw[t] : undefined;
+  const pgRaw = pgStore.use();
+  const P: PgState | undefined = t ? pgRaw[t] : undefined;
+  const isLive = !!liveTenantId(t);
   // live tenant: never show the design's sample records while KAP has not answered
-  const H = t && !(liveTenantId(t) && !K) ? data[t] : EMPTY;
+  const H0 = t && !(isLive && !K) ? data[t] : EMPTY;
+  // live tenant: the platform's PostgreSQL sources and export runs next to KAP's records
+  const H = React.useMemo(() => (isLive ? withPg(H0, P, Date.now()) : H0), [isLive, H0, P]);
   const actor = access.uid;
+
+  // PostgreSQL sources, datasets and export runs from the platform API (its own load: a platform
+  // without the feature, or failing, must not break the KAP hub)
+  const pgLive = useLiveLoad(
+    'ingest-pg',
+    key,
+    async (tenantId) => {
+      if (t) await loadPg(tenantId, t);
+    },
+    hasActiveExport(P) ? PG_ACTIVE_REFRESH_MS : undefined,
+  );
 
   const live = useLiveLoad(
     'ingest',
@@ -328,22 +356,50 @@ export function useIngest(): IngestCtx & { tenant: IngestTenantKey | null; liveS
       else doIt();
     };
 
+    // ---------------------------------------------------------------- PostgreSQL (platform API, live tenant)
+    const pgA = makePgActs({
+      d,
+      live: pgLive,
+      tid,
+      t,
+      P: () => (t ? pgStore.get()[t] : undefined),
+      sourceNames: () => [...(kapNow()?.conns ?? []).map((x) => x.name), ...(t ? pgStore.get()[t]?.sources.map((x) => x.name) ?? [] : []), ...fresh().sources.filter(isSess).map((s) => s.id)],
+      kapCollections: () => (kapNow()?.colls ?? []).map((x) => x.name),
+      audit,
+      go,
+    });
+    const pgMissing = () => {
+      if (t && pgStore.get()[t]?.missing) {
+        d.info('PostgreSQL data source', PG_FEATURE_MISSING);
+        return true;
+      }
+      return false;
+    };
+
     const a: IngestCtx['a'] = {
       addSource: () => {
         if (!live.on) return d.wizard(sourceWizard(fresh(), null, actor, saveSource));
         d.form('Create data source', sourceTypeFields(), 'Next', (v) => {
+          if (v.type === PG_CHOICE) {
+            window.setTimeout(() => !pgMissing() && pgA.addSource(), 0);
+            return '';
+          }
           const ty = typeOfChoice(v.type);
           window.setTimeout(() => (ty ? d.wizard(sourceWizard(fresh(), null, actor, saveSource, { preType: ty, sessionOnly: true })) : kapSourceWizard('create')), 0);
           return '';
         });
       },
       editSource: (s: Source) => {
+        const pg = pgOfSource(s);
+        if (pg) return pgA.editSource(pg.id);
         const k = kapOfSource(s);
         if (!k) return d.wizard(sourceWizard(fresh(), s, actor, saveSource, { sessionOnly: live.on }));
         if (k.type !== 's3') return d.info(`Edit ${s.id}`, 'File-system connectors are configured by the platform. The KAP API manages S3 connectors only.');
         kapSourceWizard(k.active ? 'edit' : 'restore', s.id);
       },
       testSource: (s: Source) => {
+        const pg = pgOfSource(s);
+        if (pg) return pgA.testSource(pg.id);
         const k = kapOfSource(s);
         if (!k) return sessTest(s);
         if (k.type !== 's3') return d.info(`Check ${s.id}`, 'KAP checks S3 connectors only.');
@@ -353,6 +409,8 @@ export function useIngest(): IngestCtx & { tenant: IngestTenantKey | null; liveS
         );
       },
       toggleSource: (s: Source) => {
+        const pg = pgOfSource(s);
+        if (pg) return pgA.deleteSource(pg.id);
         const k = kapOfSource(s);
         if (!k) return sessToggleSource(s);
         if (k.type !== 's3') return d.info(s.id, 'File-system connectors are configured by the platform. The KAP API manages S3 connectors only.');
@@ -465,6 +523,6 @@ export function useIngest(): IngestCtx & { tenant: IngestTenantKey | null; liveS
       if (j && j.result === undefined && !['waiting', 'running'].includes(j.state)) ensureJobDetail(tid, t, j.id).catch(() => undefined);
     };
 
-    return { tenant: t, H, canData, canRun, canConfigure, live: live.on, go, a, liveState: live, fetchRun };
-  }, [t, H, canData, canRun, canConfigure, actor, base, nav, d, live]);
+    return { tenant: t, H, canData, canRun, canConfigure, live: live.on, go, a, liveState: live, fetchRun, pg: { on: live.on, state: P, live: pgLive, a: pgA } };
+  }, [t, H, P, canData, canRun, canConfigure, actor, base, nav, d, live, pgLive]);
 }

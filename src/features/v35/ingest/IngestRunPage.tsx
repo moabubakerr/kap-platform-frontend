@@ -8,6 +8,8 @@ import { isConsoleRun } from './consoleRuns';
 import { kapOfRun } from './fromKap';
 import { liveIngestStore, liveRunStore, loadRun, RUN_NEXT_SCAN_MS, runRefreshMs } from './liveIngest';
 import { LiveRunItems, LiveRunOverview, type LiveRunData } from './LiveRunView';
+import { isPgRunId } from './pgView';
+import { PgRunPage } from './PgRunView';
 import { useIngest } from './useIngest';
 
 /**
@@ -16,8 +18,20 @@ import { useIngest } from './useIngest';
  * Live tenant (KAP job): a live step view (Overview), the run's files (Processed Items) and the logs;
  * the run is read every 2 s while it is waiting or running, and every 10 s after a run that found
  * nothing (to show the data source's next scan).
+ * Live tenant, Postgres export run (`pg-<id8>`, platform API): `PgRunView.tsx`.
  */
 export default function IngestRunPage() {
+  const { runId = '' } = useParams();
+  return isPgRunId(runId) ? <PgRun runId={runId} /> : <KapRunPage />;
+}
+
+function PgRun({ runId }: { runId: string }) {
+  const c = useIngest();
+  useCrumbs([runId]);
+  return <PgRunPage c={c} runId={runId} />;
+}
+
+function KapRunPage() {
   const { runId = '', tab } = useParams();
   const c = useIngest();
   const [sel, setSel] = React.useState<string | null>(null);

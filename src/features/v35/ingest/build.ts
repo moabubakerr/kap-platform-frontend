@@ -12,6 +12,7 @@ import {
   srcType, stageCfg, stP, STR_ALL, trigOf, usesSource,
 } from './logic';
 import { isSess, kapOfPipe, kapOfRun, kapOfSource } from './fromKap';
+import { pgOfRun, pgOfSource } from './pgView';
 
 export interface IngestNav {
   sources: () => void;
@@ -92,7 +93,7 @@ export function runActs(c: IngestCtx, p: Pipeline): { acts: Action[]; lock: stri
 export function sourcesScreen(c: IngestCtx, F: ListFilters, setF: (f: ListFilters) => void): ScreenModel {
   const { H } = c;
   const defs: [string, string, string[]][] = [
-    ['type', 'Source type', ['Any type', ...SRC_TYPES]],
+    ['type', 'Source type', ['Any type', ...new Set([...SRC_TYPES, ...H.sources.map((s) => s.type)])]],
     ['st', 'Status', ['Any status', 'Connected', 'Failed', 'Not tested', 'Disabled']],
   ];
   const rows = H.sources.filter((s) => anyOk(F, 'type', s.type) && anyOk(F, 'st', s.st) && qOk(F, `${s.id} ${s.desc}`));
@@ -112,7 +113,9 @@ export function sourcesScreen(c: IngestCtx, F: ListFilters, setF: (f: ListFilter
               cell(s.type, { sub: implL(s), tip: implSub(s) }),
               cell(ihLoc(s)),
               cell('', { p: srcP(s.st), tip: s.err || '' }),
-              cell(H.pipelines.filter((p) => usesSource(p, s.id)).length),
+              pgOfSource(s)
+                ? cell(`${pgOfSource(s)!.datasets} ${pgOfSource(s)!.datasets === 1 ? 'dataset' : 'datasets'}`, { tip: 'Exported to KAP by the platform' })
+                : cell(H.pipelines.filter((p) => usesSource(p, s.id)).length),
               cell(s.chk),
             ],
             acts: [act('Open', () => c.go.source(s.id))],
@@ -451,6 +454,8 @@ export const ageDays = (s: string) => {
 
 /** Data source of a run: a live run's connector (or its pipeline's connectors), else the pipeline's source. */
 export function srcOfRun(H: IngestTenant, r: Run): string {
+  const pg = pgOfRun(r);
+  if (pg) return pg.source;
   const K = kapOfRun(r);
   const p = pipeOf(H, r.pipe);
   if (K) return K.connector || kapOfPipe(p)?.conns.join(', ') || (p ? srcName(p.v) : '');
@@ -465,7 +470,7 @@ export function filterRuns(H: IngestTenant, F: ListFilters): Run[] {
       (!F.src || F.src.startsWith('Any') || srcOfRun(H, r).split(', ').includes(F.src)) &&
       anyOk(F, 'st', r.st) &&
       (!F.per || F.per === 'Any time' || ageDays(r.start) <= (F.per === 'Last 24 hours' ? 1 : 7)) &&
-      qOk(F, `${r.id} ${r.pipe} ${r.trig} ${kapOfRun(r)?.collection ?? ''}`),
+      qOk(F, `${r.id} ${r.pipe} ${r.trig} ${kapOfRun(r)?.collection ?? pgOfRun(r)?.collection ?? ''}`),
   );
 }
 
