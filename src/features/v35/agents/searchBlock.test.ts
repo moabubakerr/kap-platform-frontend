@@ -4,7 +4,7 @@ import { GROUP_TEMPLATE, PREFERRED_TYPE, SUMMARY_PROMPT, withSummarizeStage } fr
 import { searchInfo } from './live';
 import { promptWithSearch, systemPromptWizard } from './liveForms';
 import {
-  entityIdFor, loadChoice, needsSearch, saveChoice, searchBlock, searchTargets, searchWarnings, withSearchBlock,
+  DEFAULT_CHOICE, entityIdFor, loadChoice, needsSearch, saveChoice, searchBlock, searchTargets, searchWarnings, withSearchBlock,
   type CollSearchInfo,
 } from './searchBlock';
 
@@ -90,11 +90,11 @@ describe('per-agent entity id setting', () => {
   it('round-trips through localStorage and survives blocked storage', () => {
     const mem: Record<string, string> = {};
     (globalThis as { localStorage?: unknown }).localStorage = { getItem: (k: string) => mem[k] ?? null, setItem: (k: string, v: string) => { mem[k] = v; } };
-    expect(loadChoice('a1')).toEqual({ mode: 'group', value: '' });
+    expect(loadChoice('a1')).toEqual(DEFAULT_CHOICE);
     expect(saveChoice('a1', { mode: 'fixed', value: 'E1' })).toBe(true);
     expect(loadChoice('a1')).toEqual({ mode: 'fixed', value: 'E1' });
     (globalThis as { localStorage?: unknown }).localStorage = { getItem: () => { throw new Error('blocked'); }, setItem: () => { throw new Error('blocked'); } };
-    expect(loadChoice('a1')).toEqual({ mode: 'group', value: '' });
+    expect(loadChoice('a1')).toEqual(DEFAULT_CHOICE);
     expect(saveChoice('a1', { mode: 'group', value: '' })).toBe(false);
   });
 });
@@ -116,5 +116,12 @@ describe('search info and the system prompt editor', () => {
     const btn = fields.find((f) => f.type === 'button') as { click: () => void };
     btn.click();
     expect(vals.prompt).toBe(`Be brief.\n\n${ONE}`);
+  });
+});
+
+describe('default entity id (verified on the stand, 25 Nov 2026)', () => {
+  it('sends a fixed non-group value, because hybrid_search leaves the given entity out', () => {
+    expect(DEFAULT_CHOICE).toEqual({ mode: 'fixed', value: 'none' });
+    expect(entityIdFor(DEFAULT_CHOICE, ['d864b80f:samples'])).toBe('none');
   });
 });

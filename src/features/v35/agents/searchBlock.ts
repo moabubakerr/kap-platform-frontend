@@ -4,10 +4,16 @@
  * metadata_filters, ids) unless the system prompt pins them, and `entity_id`
  * is required, so the block names exactly which values to send.
  *
- * Which `entity_id` hybrid_search expects is not confirmed yet: it is a
- * per-agent console setting (the collection's document group, or a fixed
- * value), kept in this browser's localStorage only.
+ * `entity_id` is the SOURCE entity the question is about, which the results
+ * leave out (verified on the stand, 25 Nov 2026: `entity_id: "qa_question"`
+ * returned the group `<qa_docs id>:samples` with its summary). So for plain
+ * questions the default is a fixed value that is not a document group;
+ * passing a group id would exclude that group. Per-agent console setting,
+ * kept in this browser's localStorage only.
  */
+
+/** Fixed entity id for questions not about a known entity: matches no group, so nothing is excluded. */
+export const NO_SOURCE_ENTITY = 'none';
 
 export const SEARCH_TOOL = 'hybrid_search';
 export const BLOCK_START = 'How to search:';
@@ -31,8 +37,8 @@ export interface EntityIdChoice {
   mode: EntityIdMode;
   value: string;
 }
-export const ENTITY_MODE_L: Record<EntityIdMode, string> = { group: 'Collection document group', fixed: 'Fixed value' };
-export const DEFAULT_CHOICE: EntityIdChoice = { mode: 'group', value: '' };
+export const ENTITY_MODE_L: Record<EntityIdMode, string> = { group: 'Collection document group (excludes that group)', fixed: 'Fixed value (default: none)' };
+export const DEFAULT_CHOICE: EntityIdChoice = { mode: 'fixed', value: NO_SOURCE_ENTITY };
 
 /** The entity id an agent sends for a collection: the fixed value, or the (first) document group. '' = unknown. */
 export const entityIdFor = (choice: EntityIdChoice, groups: string[]) => (choice.mode === 'fixed' ? choice.value.trim() : groups[0] ?? '');
