@@ -13,7 +13,7 @@ import { liveIamStore, liveOf, loadLiveIam } from './liveStore';
  */
 export function useLiveIam(c: IamCtx): { live: Live; ctx: LiveCtx | null } {
   const T = c.T;
-  const live = useLiveLoad('iam', T, (tenantId) => loadLiveIam(T, tenantId));
+  const live = useLiveLoad('iam', T, (tenantId) => loadLiveIam(T, tenantId), 120_000); // one call per user: refresh slowly
   const all = liveIamStore.use();
   const d = useDialogs();
   if (!live.on || !live.tenantId) return { live, ctx: null };

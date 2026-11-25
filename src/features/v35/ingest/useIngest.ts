@@ -51,6 +51,7 @@ export function useIngest(): IngestCtx & { tenant: IngestTenantKey | null; liveS
     async (tenantId) => {
       if (t) await loadIngest(tenantId, t);
     },
+    // fast while a run is active; otherwise the default live refresh picks up runs started by connector scans
     hasActiveRun(K) ? ACTIVE_REFRESH_MS : undefined,
   );
 

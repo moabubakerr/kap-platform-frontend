@@ -37,9 +37,15 @@ export interface Live {
   at: number | null;
 }
 
+/** Default refresh of live data while the page is visible. KAP changes on its own
+ * (connector scans every few minutes, workers finishing), so screens must not
+ * wait for a manual refresh. */
+export const LIVE_DEFAULT_REFRESH_MS = 30_000;
+
 /**
  * Fill a store from KAP for a live tenant. `load` writes into the store; it runs
- * on first use, on `reload()` and every `refreshMs` (default: no polling).
+ * on first use, on `reload()`, when the window regains focus, and every
+ * `refreshMs` (default `LIVE_DEFAULT_REFRESH_MS`; `0` = no polling) while visible.
  * `key` names the dataset; hubs sharing a key share one load.
  */
 export function useLiveLoad(key: string, tenantKey: TenantKey | string | null | undefined, load: (tenantId: string) => Promise<void>, refreshMs?: number): Live {
@@ -54,8 +60,10 @@ export function useLiveLoad(key: string, tenantKey: TenantKey | string | null | 
       await loadRef.current(tenantId!);
       return Date.now();
     },
-    staleTime: 30_000,
-    refetchInterval: refreshMs,
+    staleTime: 10_000,
+    refetchInterval: refreshMs === 0 ? false : (refreshMs ?? LIVE_DEFAULT_REFRESH_MS),
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: true,
     retry: 1,
   });
   const reload = React.useCallback(async () => {
