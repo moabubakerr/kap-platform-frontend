@@ -16,8 +16,15 @@ server {
 
     # /api/platform/traces -> ${PLATFORM_UPSTREAM}/api/traces ; the API key is added here,
     # server-side, and never reaches the browser.
+    #
+    # The upstream is a variable so nginx re-resolves it through Docker's DNS: rebuilding
+    # platform-api gives its container a new IP, and a fixed proxy_pass kept the old one
+    # (console showed "platform API not reachable" until kap-console restarted, 25 Nov 2026).
     location /api/platform/ {
-        proxy_pass ${PLATFORM_UPSTREAM}/api/;
+        resolver 127.0.0.11 valid=10s ipv6=off;
+        set $platform_upstream ${PLATFORM_UPSTREAM};
+        rewrite ^/api/platform/(.*)$ /api/$1 break;
+        proxy_pass $platform_upstream;
         proxy_http_version 1.1;
         proxy_set_header Authorization "Bearer ${PLATFORM_API_KEY}";
         proxy_set_header Host $host;
