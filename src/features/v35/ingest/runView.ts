@@ -293,9 +293,18 @@ export interface ScanSource {
 }
 
 /** Why a run processed nothing, in plain words. */
-export function zeroExplanation(conns: ScanSource[]): { title: string; lines: string[] } {
+export function zeroExplanation(conns: ScanSource[], earlier?: { label: string; outcome: string } | null): { title: string; lines: string[] } {
   const scans = conns.map((c) => (c.interval ? `${c.name} (${intervalWords(c.interval)})` : c.name));
   const who = scans.length ? `the next scan of ${scans.join(' or ')}` : "the data source's next scan";
+  if (earlier)
+    return {
+      title: 'Already processed by an earlier run',
+      lines: [
+        `${earlier.label} ${earlier.outcome}, just before this run started. So this run found nothing new and finished at once. That is expected, not an error.`,
+        'A run only processes files the data source has found and not yet processed. Data sources find new uploads on their own scans, and each scan starts its own run.',
+        `Files uploaded later are found by ${who}.`,
+      ],
+    };
   return {
     title: 'Nothing new to process',
     lines: [
@@ -314,10 +323,28 @@ export interface FollowUp {
   active: boolean;
 }
 
-/** Later jobs of the same collection, oldest first. */
+/** How far back a zero-file run looks for the run that already processed the files
+ * (a scan often runs seconds before a manual Run now: verified 25 Nov 2026). */
+export const EARLIER_WINDOW_MS = 15 * 60_000;
+
+/** Other jobs of the same collection from 15 min before this one onwards, oldest first. */
 export function laterRuns(j: Pick<KapJob, 'id' | 'collection_id' | 'created_at'>, jobs: KapJob[]): KapJob[] {
+  const from = ms(j.created_at) - EARLIER_WINDOW_MS;
+  return jobs.filter((x) => x.id !== j.id && x.collection_id === j.collection_id && ms(x.created_at) >= from).sort((a, b) => ms(a.created_at) - ms(b.created_at));
+}
+
+/** Split related runs into those started before this run and those after. */
+export function splitRelated(j: Pick<KapJob, 'created_at'>, related: KapJob[]): { before: KapJob[]; after: KapJob[] } {
   const t = ms(j.created_at);
-  return jobs.filter((x) => x.id !== j.id && x.collection_id === j.collection_id && ms(x.created_at) > t).sort((a, b) => ms(a.created_at) - ms(b.created_at));
+  return { before: related.filter((x) => ms(x.created_at) < t).reverse(), after: related.filter((x) => ms(x.created_at) >= t) };
+}
+
+/** Files a run processed (or is processing). */
+const handled = (x: Pick<KapJob, 'progress' | 'result'>) => x.progress?.total ?? (x.result ? x.result.succeeded + x.result.failed + x.result.cancelled : 0);
+
+/** The most recent earlier run that processed files (or is processing them): it explains a zero-file run. */
+export function earlierWork(j: Pick<KapJob, 'created_at'>, related: KapJob[]): KapJob | null {
+  return splitRelated(j, related).before.find((x) => isActiveJob(x) || handled(x) > 0) ?? null;
 }
 
 /** "Scan of qa_s3 at 11:36" + "processed 1 file". */

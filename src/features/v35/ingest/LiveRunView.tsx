@@ -11,8 +11,8 @@ import type { Run, RunStatus } from '@/v35/data/ingest';
 import type { IngestNav } from './build';
 import { kapOfRun, runId, type KapCollection, type KapConnector, type KapJob, type KapPipeline } from './fromKap';
 import {
-  followUp, hhmm, hhmmss, isZeroRun, progressOf, runDuration, runFiles, runItems, runSteps, triggerOf, zeroExplanation,
-  type KapFileItem, type RunStep, type StepState,
+  earlierWork, followUp, hhmm, hhmmss, isZeroRun, progressOf, runDuration, runFiles, runItems, runSteps, splitRelated, triggerOf, zeroExplanation,
+  type FollowUp, type KapFileItem, type RunStep, type StepState,
 } from './runView';
 
 // ------------------------------------------------------------------ small parts
@@ -222,8 +222,10 @@ function Stepper({ steps }: { steps: RunStep[] }) {
   );
 }
 
-function ZeroBox({ srcs }: { D: LiveRunData; srcs: { name: string; interval: string | null }[] }) {
-  const z = zeroExplanation(srcs);
+function ZeroBox({ D, srcs }: { D: LiveRunData; srcs: { name: string; interval: string | null }[] }) {
+  const e = D.later ? earlierWork(D.job, D.later) : null;
+  const ef = e ? followUp(e, connName(D, e.connector_id), D.ours(e.id)) : null;
+  const z = zeroExplanation(srcs, ef);
   return (
     <div className="flex items-start gap-3 rounded-card border border-line-subtle bg-info-bg px-4 py-3.5 text-info">
       <Info size={18} className="mt-0.5 flex-none" />
@@ -232,6 +234,14 @@ function ZeroBox({ srcs }: { D: LiveRunData; srcs: { name: string; interval: str
         {z.lines.map((l) => (
           <p key={l}>{l}</p>
         ))}
+        {e && (
+          <div>
+            <LinkBtn onClick={() => D.go.run(runId(e.id))}>
+              Open run {runId(e.id)}
+              <ChevronRight size={14} />
+            </LinkBtn>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -239,24 +249,28 @@ function ZeroBox({ srcs }: { D: LiveRunData; srcs: { name: string; interval: str
 
 function WhatNext({ D, srcs }: { D: LiveRunData; srcs: { name: string; interval: string | null }[] }) {
   const later = D.later;
-  const fs = (later ?? []).map((x) => followUp(x, connName(D, x.connector_id), D.ours(x.id)));
+  const rel = later ? splitRelated(D.job, later) : { before: [], after: [] };
+  const fs = rel.after.map((x) => followUp(x, connName(D, x.connector_id), D.ours(x.id)));
+  const before = rel.before.map((x) => followUp(x, connName(D, x.connector_id), D.ours(x.id)));
   const scanNames = srcs.map((s) => s.name).join(' or ') || 'the data source';
   return (
     <div className="card px-4 py-4">
-      <div className="mb-1 text-[15px] font-semibold text-ink-strong">What happened next</div>
-      <div className="mb-3 text-[13px] text-ink-muted">Later runs of the collection {D.collection?.name ?? ''}, checked every 10 seconds while this page is open.</div>
+      <div className="mb-1 text-[15px] font-semibold text-ink-strong">Other runs of {D.collection?.name ?? 'this collection'}</div>
+      <div className="mb-3 text-[13px] text-ink-muted">Runs from 15 minutes before this one onwards, checked every 10 seconds while this page is open.</div>
+      {before.length > 0 && (
+        <>
+          <div className="mb-1.5 text-[12px] font-semibold uppercase tracking-wide text-ink-muted">Just before</div>
+          <ul className="mb-3 flex flex-col gap-2">
+            {before.map((f) => (
+              <FollowRow key={f.job.id} f={f} D={D} />
+            ))}
+          </ul>
+        </>
+      )}
+      <div className="mb-1.5 text-[12px] font-semibold uppercase tracking-wide text-ink-muted">After</div>
       <ul className="flex flex-col gap-2">
         {fs.map((f) => (
-          <li key={f.job.id} className="flex flex-wrap items-center gap-2 text-[13.5px]">
-            {f.active ? <Loader2 size={16} className="animate-spin text-info" /> : f.outcome === 'found nothing new' ? <MinusCircle size={16} className="text-ink-subtle" /> : <CheckCircle2 size={16} className={f.job.state === 'failed' ? 'text-danger' : 'text-success'} />}
-            <span className="text-ink-strong">
-              {f.label} {f.outcome}
-            </span>
-            <LinkBtn onClick={() => D.go.run(runId(f.job.id))}>
-              Open run {runId(f.job.id)}
-              <ChevronRight size={14} />
-            </LinkBtn>
-          </li>
+          <FollowRow key={f.job.id} f={f} D={D} />
         ))}
         {later === undefined || later === null ? (
           <li className="flex items-center gap-2 text-[13.5px] text-ink-muted">
@@ -269,6 +283,21 @@ function WhatNext({ D, srcs }: { D: LiveRunData; srcs: { name: string; interval:
         ) : null}
       </ul>
     </div>
+  );
+}
+
+function FollowRow({ f, D }: { f: FollowUp; D: LiveRunData }) {
+  return (
+    <li className="flex flex-wrap items-center gap-2 text-[13.5px]">
+      {f.active ? <Loader2 size={16} className="animate-spin text-info" /> : f.outcome === 'found nothing new' ? <MinusCircle size={16} className="text-ink-subtle" /> : <CheckCircle2 size={16} className={f.job.state === 'failed' ? 'text-danger' : 'text-success'} />}
+      <span className="text-ink-strong">
+        {f.label} {f.outcome}
+      </span>
+      <LinkBtn onClick={() => D.go.run(runId(f.job.id))}>
+        Open run {runId(f.job.id)}
+        <ChevronRight size={14} />
+      </LinkBtn>
+    </li>
   );
 }
 

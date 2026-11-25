@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { toRun, type KapJob, type KapPipeline } from './fromKap';
 import {
-  failedStep, followUp, hhmm, intervalWords, isZeroRun, laterRuns, progressOf, runFiles, runItems, runSteps, stageSteps, triggerOf, zeroExplanation,
+  failedStep, followUp, hhmm, intervalWords, isZeroRun, laterRuns, earlierWork, splitRelated, progressOf, runFiles, runItems, runSteps, stageSteps, triggerOf, zeroExplanation,
   TRIGGER_CONSOLE, TRIGGER_OUTSIDE, type KapFileItem,
 } from './runView';
 
@@ -150,6 +150,22 @@ describe('a run that found nothing', () => {
     expect(f.outcome).toBe('processed 1 file');
     expect(followUp(job({ connector_id: CONN, state: 'running', finished_at: null, result: null, progress: { total: 2, completed: 1, percent: 50 } }), 'qa_s3', false).outcome).toBe('is processing 2 files (1 done)');
     expect(followUp(job({}), '', true)).toMatchObject({ outcome: 'found nothing new', active: false });
+  });
+
+  it('explains a zero-file run with the scan that ran just before it (seen on the stand)', () => {
+    // 25 Nov 2026: scan 4d37de26 at 12:09:02 processed 3 files; Run now 415ebba… at 12:09:17 found nothing
+    const manual = job({ id: '415ebba0-0000-0000-0000-000000000001', created_at: at('12:09:17'), running_at: at('12:09:17'), finished_at: at('12:09:17') });
+    const scan = job({ id: '4d37de26-0000-0000-0000-000000000001', connector_id: CONN, created_at: at('12:09:02'), progress: { total: 3, completed: 3, percent: 100 }, result: { succeeded: 3, failed: 0, cancelled: 0 } });
+    const emptyScan = job({ id: '11111111-0000-0000-0000-000000000001', connector_id: CONN, created_at: at('12:06:02') });
+    const tooOld = job({ id: '22222222-0000-0000-0000-000000000001', connector_id: CONN, created_at: at('11:30:00'), progress: { total: 1, completed: 1, percent: 100 }, result: { succeeded: 1, failed: 0, cancelled: 0 } });
+    const rel = laterRuns(manual, [manual, scan, emptyScan, tooOld]);
+    expect(rel.map((x) => x.id.slice(0, 8))).toEqual(['11111111', '4d37de26']);
+    expect(splitRelated(manual, rel).before.map((x) => x.id.slice(0, 8))).toEqual(['4d37de26', '11111111']);
+    const e = earlierWork(manual, rel)!;
+    expect(e.id.slice(0, 8)).toBe('4d37de26');
+    const z = zeroExplanation([{ name: 'qa_s3', interval: 'PT3M' }], followUp(e, 'qa_s3', false));
+    expect(z.title).toBe('Already processed by an earlier run');
+    expect(z.lines[0]).toContain('processed 3 files, just before this run started');
   });
 });
 
