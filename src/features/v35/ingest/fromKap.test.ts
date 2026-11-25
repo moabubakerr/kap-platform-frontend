@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { IngestTenant } from '@/v35/data/ingest';
 import { pipeScreen, runScreen, runsScreen, sourceScreen, sourcesScreen, type IngestCtx } from './build';
 import {
-  connectorValues, isSess, kapOfPipe, NEW_KEYS, pipelineValues, rel, runId, runStatus, span, toIngestTenant, toKapConnectorCreate, toKapConnectorPatch, toKapPipelineCreate, toKapPipelinePatch,
+  connectorValues, isSess, KEYS_REF, kapOfPipe, NEW_KEYS, pipelineValues, rel, runId, runStatus, span, toIngestTenant, toKapConnectorCreate, toKapConnectorPatch, toKapPipelineCreate, toKapPipelinePatch,
   toKapPipelineRestore, toKapRun, toPipeline, toRun, toSource, validateConnector, validatePipeline,
   type KapCollection, type KapConnector, type KapIngest, type KapJob, type KapPipeline,
 } from './fromKap';
@@ -170,7 +170,7 @@ describe('tenant slice', () => {
 
 describe('connector bodies', () => {
   it('builds a create body with secret references', () => {
-    const v = { ...connectorValues(null), name: 'new_bucket', endpoint_url: 'https://s3.x', bucket_name: 'my-bucket', include: '*.pdf, *.docx', ak_id: 'a0000000-0000-0000-0000-000000000001', sk_id: 'a0000000-0000-0000-0000-000000000002' };
+    const v = { ...connectorValues(null), name: 'new_bucket', endpoint_url: 'https://s3.x', bucket_name: 'my-bucket', include: '*.pdf, *.docx', key_mode: KEYS_REF, ak_id: 'a0000000-0000-0000-0000-000000000001', sk_id: 'a0000000-0000-0000-0000-000000000002' };
     expect(toKapConnectorCreate(v)).toEqual({
       name: 'new_bucket',
       type: 's3',
@@ -190,11 +190,16 @@ describe('connector bodies', () => {
     });
   });
 
+  it('sends typed key values by default (KAP without a secret store)', () => {
+    const v = { ...connectorValues(null), name: 'qa_s3', endpoint_url: 'http://s3:9000', bucket_name: 'sandbox-sources', ak_value: 'AK', sk_value: 'SK' };
+    expect(toKapConnectorCreate(v).config.auth).toEqual({ type: 'static_keys', access_key: 'AK', secret_key: 'SK' });
+  });
+
   it('patches only what changed', () => {
     const v = connectorValues(s3);
     expect(toKapConnectorPatch(s3, v)).toBeNull();
     expect(toKapConnectorPatch(s3, { ...v, prefix: 'docs/', interval: 'P1D', verify_tls: 'No' })).toEqual({ settings: { object_selector: { prefix: 'docs/' }, sync: { interval: 'P1D' } }, config: { verify_tls: false } });
-    const keys = toKapConnectorPatch(s3, { ...v, keys: NEW_KEYS, backend: 'vault', ak_id: 'x', ak_ver: '2', sk_id: 'y', sk_ver: '3' }) as { config: { auth: unknown } };
+    const keys = toKapConnectorPatch(s3, { ...v, keys: NEW_KEYS, key_mode: KEYS_REF, backend: 'vault', ak_id: 'x', ak_ver: '2', sk_id: 'y', sk_ver: '3' }) as { config: { auth: unknown } };
     expect(keys.config.auth).toEqual({ type: 'static_keys', access_key: { $secret: { backend: 'vault', secret_id: 'x', version: '2' } }, secret_key: { $secret: { backend: 'vault', secret_id: 'y', version: '3' } } });
   });
 
@@ -204,7 +209,9 @@ describe('connector bodies', () => {
     expect(validateConnector(1, { ...v, name: 'sbx_docs' }, ['sbx_docs'], false, true)).toMatch(/exists/);
     expect(validateConnector(2, { ...v, endpoint_url: 'https://s3.x', bucket_name: 'B' }, [], false, true)).toMatch(/Bucket/);
     expect(validateConnector(2, { ...v, endpoint_url: 'https://s3.x', bucket_name: 'ok-bucket', interval: '1h' }, [], false, true)).toMatch(/ISO 8601/);
-    expect(validateConnector(3, { ...v, ak_id: 'nope' }, [], false, true)).toMatch(/Access key/);
+    expect(validateConnector(3, { ...v, key_mode: KEYS_REF, ak_id: 'nope' }, [], false, true)).toMatch(/Access key/);
+    expect(validateConnector(3, { ...v, ak_value: '' }, [], false, true)).toMatch(/Enter the access key/);
+    expect(validateConnector(3, { ...v, ak_value: 'AK', sk_value: 'SK' }, [], false, true)).toBe('');
     expect(validateConnector(3, connectorValues(s3), [], true, false)).toBe('');
   });
 

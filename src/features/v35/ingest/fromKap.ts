@@ -452,7 +452,10 @@ export const PIPE_NAME_RX_KAP = /^[a-zA-Z0-9_]{4,64}$/;
 export const UUID_RX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export const INTERVALS = ['PT3M', 'PT15M', 'PT1H', 'PT6H', 'P1D'];
 export const KEEP_KEYS = 'Keep the stored keys';
-export const NEW_KEYS = 'Set new secret references';
+export const NEW_KEYS = 'Set new keys';
+/** How the keys are given: typed values (KAP with SECRET_PROVIDER_MODE=disabled, e.g. the test stand) or secret-store references. */
+export const KEYS_TYPED = 'Type the key values';
+export const KEYS_REF = 'Secret store reference';
 
 const globs = (s: unknown) =>
   String(s ?? '')
@@ -461,6 +464,11 @@ const globs = (s: unknown) =>
     .filter(Boolean);
 const bool = (s: unknown) => s === 'Yes';
 const ref = (backend: string, id: unknown, version: unknown): KapSecretRef => ({ $secret: { backend: (backend === 'azure_key_vault' ? 'azure_key_vault' : 'vault'), secret_id: String(id ?? '').trim(), version: String(version ?? '').trim() || '1' } });
+/** `auth` for KAP: typed values are sent as plain strings (KAP rejects them when its secret store is required). */
+const authOf = (v: FormValues) =>
+  v.key_mode === KEYS_REF
+    ? { type: 'static_keys' as const, access_key: ref(v.backend, v.ak_id, v.ak_ver), secret_key: ref(v.backend, v.sk_id, v.sk_ver) }
+    : { type: 'static_keys' as const, access_key: String(v.ak_value ?? ''), secret_key: String(v.sk_value ?? '') };
 
 /** Wizard values for an S3 connector (new, or prefilled from KAP). */
 export function connectorValues(c: KapConnector | null): FormValues {
@@ -479,6 +487,9 @@ export function connectorValues(c: KapConnector | null): FormValues {
     verify_tls: k.verify_tls === false ? 'No' : 'Yes',
     addressing_style: k.addressing_style ?? 'auto',
     keys: c ? KEEP_KEYS : NEW_KEYS,
+    key_mode: KEYS_TYPED,
+    ak_value: '',
+    sk_value: '',
     backend: 'vault',
     ak_id: '',
     ak_ver: '1',
@@ -500,7 +511,10 @@ export function validateConnector(step: number, v: FormValues, existing: string[
     if (!/^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/.test(String(v.bucket_name || '').trim())) return 'Bucket: 3–63 lower-case letters, digits, dots and hyphens.';
     if (!/^P(?!$)(\d+D)?(T(?=\d)(\d+H)?(\d+M)?(\d+S)?)?$/.test(String(v.interval || ''))) return 'Sync interval: an ISO 8601 duration such as PT3M or P1D.';
   }
-  if (step === 3 && (needKeys || v.keys === NEW_KEYS)) {
+  if (step === 3 && (needKeys || v.keys === NEW_KEYS) && v.key_mode !== KEYS_REF) {
+    if (!String(v.ak_value ?? '').trim() || !String(v.sk_value ?? '')) return 'Enter the access key and the secret key.';
+  }
+  if (step === 3 && (needKeys || v.keys === NEW_KEYS) && v.key_mode === KEYS_REF) {
     if (!UUID_RX.test(String(v.ak_id || '').trim())) return 'Access key: enter the secret id (a UUID) of its version in the secret store.';
     if (!UUID_RX.test(String(v.sk_id || '').trim())) return 'Secret key: enter the secret id (a UUID) of its version in the secret store.';
     if (!String(v.ak_ver || '').trim() || !String(v.sk_ver || '').trim()) return 'Enter the secret versions.';
@@ -524,7 +538,7 @@ export function toKapConnectorCreate(v: FormValues) {
       use_ssl: bool(v.use_ssl),
       verify_tls: bool(v.verify_tls),
       addressing_style: (v.addressing_style || 'auto') as 'auto' | 'path' | 'virtual',
-      auth: { type: 'static_keys' as const, access_key: ref(v.backend, v.ak_id, v.ak_ver), secret_key: ref(v.backend, v.sk_id, v.sk_ver) },
+      auth: authOf(v),
     },
   };
 }
@@ -545,7 +559,7 @@ export function toKapConnectorPatch(c: KapConnector, v: FormValues): Record<stri
   for (const k of ['endpoint_url', 'region', 'bucket_name'] as const) if (String(v[k] ?? '').trim() !== String(cur[k] ?? '')) config[k] = String(v[k] ?? '').trim();
   for (const k of ['use_ssl', 'verify_tls'] as const) if (v[k] !== cur[k]) config[k] = bool(v[k]);
   if (v.addressing_style !== cur.addressing_style) config.addressing_style = v.addressing_style;
-  if (v.keys === NEW_KEYS) config.auth = { type: 'static_keys', access_key: ref(v.backend, v.ak_id, v.ak_ver), secret_key: ref(v.backend, v.sk_id, v.sk_ver) };
+  if (v.keys === NEW_KEYS) config.auth = authOf(v);
   if (Object.keys(config).length) out.config = config;
   return Object.keys(out).length ? out : null;
 }

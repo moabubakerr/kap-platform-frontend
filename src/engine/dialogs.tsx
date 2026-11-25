@@ -27,7 +27,7 @@ export type FormValues = Record<string, any>;
 export type SaveResult = string | Promise<string>;
 
 export type FormField =
-  | { type: 'text' | 'num'; k: string; label: string; val?: string; ph?: string; hint?: string; ro?: boolean }
+  | { type: 'text' | 'num'; k: string; label: string; val?: string; ph?: string; hint?: string; ro?: boolean; /** masked input (keys, passwords) */ secret?: boolean }
   | { type: 'select'; k: string; label: string; val?: string; opts: string[]; hint?: string }
   | { type: 'chips'; k: string; label: string; val?: string[]; opts: string[]; hint?: string }
   | { type: 'textarea'; k: string; label: string; val?: string; ph?: string; hint?: string; rows?: number }
@@ -175,7 +175,7 @@ function FieldView({ f, v, set }: { f: FormField; v: FormValues; set: (k: string
       return (
         <label className="flex flex-col gap-1.5">
           <span className="text-[13px] font-medium text-ink-strong">{f.label}</span>
-          <input type={f.type === 'num' ? 'number' : 'text'} value={v[f.k] ?? ''} placeholder={f.ph} disabled={f.ro} onChange={(e) => set(f.k, e.target.value)} className={inputCls} />
+          <input type={f.type === 'num' ? 'number' : f.secret ? 'password' : 'text'} autoComplete={f.secret ? 'new-password' : undefined} value={v[f.k] ?? ''} placeholder={f.ph} disabled={f.ro} onChange={(e) => set(f.k, e.target.value)} className={inputCls} />
           {hint}
         </label>
       );

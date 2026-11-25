@@ -5,7 +5,7 @@
  */
 import type { FormField, FormValues, WizardSpec } from '@/engine/dialogs';
 import {
-  connectorValues, DOC_EXTS, IMG_EXTS, intervalL, INTERVALS, KEEP_KEYS, NEW_KEYS, NO_MODEL, pipelineValues, TASKS, toKapConnectorPatch, toKapPipelinePatch, validateConnector, validatePipeline,
+  connectorValues, DOC_EXTS, IMG_EXTS, intervalL, INTERVALS, KEEP_KEYS, KEYS_REF, KEYS_TYPED, NEW_KEYS, NO_MODEL, pipelineValues, TASKS, toKapConnectorPatch, toKapPipelinePatch, validateConnector, validatePipeline,
   type KapConnector, type KapModel, type KapPipeline,
 } from './fromKap';
 import { SRC_TYPES } from './logic';
@@ -76,16 +76,24 @@ export function connectorWizard({ conn, mode, existing, finish }: ConnWizardArgs
         const set = needKeys || v.keys === NEW_KEYS;
         f = [
           ...(needKeys ? [] : [{ k: 'keys', label: 'Access key and secret key', type: 'select', opts: [KEEP_KEYS, NEW_KEYS] } as FormField]),
-          ...(set
+          ...(set ? [{ k: 'key_mode', label: 'How to give the keys', type: 'select', opts: [KEYS_TYPED, KEYS_REF] } as FormField] : []),
+          ...(set && v.key_mode !== KEYS_REF
+            ? [
+                { k: 'ak_value', label: 'Access key', type: 'text', secret: true } as FormField,
+                { k: 'sk_value', label: 'Secret key', type: 'text', secret: true } as FormField,
+                { type: 'note', tone: 'warn', text: 'For a KAP without a secret store (SECRET_PROVIDER_MODE=disabled, as on the test stand). The values go to KAP once and are never shown again. A KAP that requires a secret store rejects typed values; use a secret store reference there.' } as FormField,
+              ]
+            : []),
+          ...(set && v.key_mode === KEYS_REF
             ? [
                 { k: 'backend', label: 'Secret store', type: 'select', opts: ['vault', 'azure_key_vault'] } as FormField,
                 { k: 'ak_id', label: 'Access key · secret id', type: 'text', ph: '00000000-0000-0000-0000-000000000000' } as FormField,
                 { k: 'ak_ver', label: 'Access key · version', type: 'text', ph: '1' } as FormField,
                 { k: 'sk_id', label: 'Secret key · secret id', type: 'text', ph: '00000000-0000-0000-0000-000000000000' } as FormField,
                 { k: 'sk_ver', label: 'Secret key · version', type: 'text', ph: '1' } as FormField,
+                { type: 'note', tone: 'info', text: 'Exact-version references to secrets in the tenant secret store. Write the values to the secret store first. KAP returns only whether each key is set.' } as FormField,
               ]
             : []),
-          { type: 'note', tone: 'info', text: 'KAP takes exact-version references to secrets in the tenant secret store, never the key values. Write the values to the secret store first. KAP returns only whether each key is set.' },
         ];
       } else if (step === 4)
         f = [
@@ -109,7 +117,7 @@ export function connectorWizard({ conn, mode, existing, finish }: ConnWizardArgs
               ['Exclude', v.exclude || 'None'],
               ['Sync', intervalL(v.interval)],
               ['TLS', `SSL ${v.use_ssl} · verify ${v.verify_tls} · ${v.addressing_style} addressing`],
-              ['Keys', needKeys || v.keys === NEW_KEYS ? `New references in ${v.backend}` : 'Unchanged'],
+              ['Keys', needKeys || v.keys === NEW_KEYS ? (v.key_mode === KEYS_REF ? `New references in ${v.backend}` : 'New key values (hidden)') : 'Unchanged'],
               ['Connection check', v.check === 'Yes' ? 'After saving' : 'Not now'],
               ...(mode === 'edit' ? ([['Changes', patch ? Object.keys(patch).join(', ') : 'None']] as [string, unknown][]) : []),
             ],
