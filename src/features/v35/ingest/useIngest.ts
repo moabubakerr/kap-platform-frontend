@@ -19,10 +19,11 @@ import { liveSave, liveTenantId, useLiveLoad, type Live } from '@/v35/live';
 import { ingestStore, isIngestTenant, type IngestTenant, type IngestTenantKey, type Pipeline, type Run, type Source } from '@/v35/data/ingest';
 import type { IngestCtx } from './build';
 import {
-  checkMessage, isActiveJob, isSess, kapOfPipe, kapOfRun, kapOfSource, runId, toKapConnectorCreate, toKapConnectorPatch, toKapPipelineCreate, toKapPipelinePatch, toKapPipelineRestore, toKapRun,
+  checkMessage, isSess, kapOfPipe, kapOfRun, kapOfSource, runId, toKapConnectorCreate, toKapConnectorPatch, toKapPipelineCreate, toKapPipelinePatch, toKapPipelineRestore, toKapRun,
   type KapConnectorCheck, type KapIngest, type KapJob,
 } from './fromKap';
 import { markConsoleRun } from './consoleRuns';
+import { FAILED_FILE_STATES, IN_PROGRESS_STATES, runNowDecision, type RunNowDecision } from './runView';
 import { ACTIVE_REFRESH_MS, ensureJobDetail, hasActiveRun, liveIngestStore, loadIngest, setCheck } from './liveIngest';
 import { connectorWizard, kapPipeWizard, sourceTypeFields, typeOfChoice, type ConnMode } from './liveWizards';
 import { finishRun, pipeOf, queueRun, srcOf, startRun, testConn, trigOf, type RunOpts } from './logic';
@@ -202,14 +203,17 @@ export function useIngest(): IngestCtx & { tenant: IngestTenantKey | null; liveS
         const c = colls.find((x) => x.name === collName)!;
         const cid = connName && connName !== 'All connectors' ? kapNow()?.conns.find((x) => x.name === connName)?.id ?? null : connectorId ?? null;
         let job = '';
-        let joined = '';
+        let joined: RunNowDecision | null = null;
         return liveSave(live, async () => {
-          // a data source scan already processing this collection does the work: show it instead of
-          // starting a run that would find nothing (seen on the stand, 25 Nov 2026)
-          const recent = await kapGet<KapPage<KapJob>>(tid, `pipelines/${p.id}/jobs`, { collection_id: c.id, sort: '-created_at', limit: 5 }).catch(() => null);
-          const busy = recent?.items.find((x) => isActiveJob(x) && (!cid || x.connector_id === cid));
-          if (busy) {
-            joined = busy.id;
+          // never start a run that finds nothing while another run did (or is doing) the work:
+          // a data source scan usually processes an upload on its own (seen on the stand, 25 Nov 2026)
+          const [recent, waiting] = await Promise.all([
+            kapGet<KapPage<KapJob>>(tid, `pipelines/${p.id}/jobs`, { collection_id: c.id, sort: '-created_at', limit: 10 }).then((x) => x.items, () => null),
+            kapGet<KapPage<unknown>>(tid, `collections/${c.id}/files`, { state__in: [...IN_PROGRESS_STATES, ...FAILED_FILE_STATES], limit: 1 }).then((x) => x.total, () => null),
+          ]);
+          const dec = recent ? runNowDecision(recent, waiting, cid, Date.now()) : ({ kind: 'start' } as RunNowDecision);
+          if (dec.kind === 'join') {
+            joined = dec;
             return;
           }
           const r = await kap<{ id: string }>(tid, 'POST', `pipelines/${p.id}/run`, toKapRun(c.id, cid));
@@ -218,9 +222,15 @@ export function useIngest(): IngestCtx & { tenant: IngestTenantKey | null; liveS
           markConsoleRun(job);
         }).then((e) => {
           if (e) return e;
-          if (joined) {
-            d.toast(`A run of ${collName} is already in progress (${runId(joined)}), so no new run was started. Showing it.`);
-            window.setTimeout(() => go.run(runId(joined)), 0);
+          const j = joined as RunNowDecision | null;
+          if (j && j.kind === 'join') {
+            const id = runId(j.job.id);
+            d.toast(
+              j.why === 'active'
+                ? `A run of ${collName} is already in progress (${id}), so no new run was started. Showing it.`
+                : `Nothing is waiting in ${collName}: run ${id} already processed the latest files, so no new run was started. Showing it.`,
+            );
+            window.setTimeout(() => go.run(id), 0);
             return '';
           }
           audit('Ran pipeline', `${pid} · collection ${collName}${cid ? ` · connector ${connName}` : ''}${job ? ` · job ${job}` : ''}`);

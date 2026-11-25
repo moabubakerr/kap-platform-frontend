@@ -34,6 +34,7 @@ export interface KapFileItem {
 
 /** File states before the final one (`state__in` for files still being processed). */
 export const IN_PROGRESS_STATES = ['pending', 'syncing', 'synced', 'parsing', 'parsed', 'transforming', 'transformed', 'embedding', 'loading', 'validating', 'activating'];
+export const FAILED_FILE_STATES = ['failed_sync', 'failed_parse', 'failed_transform', 'failed_embed', 'failed_load', 'failed_validate', 'failed_activate'];
 export const isFailedState = (s: string) => s.startsWith('failed');
 /** Final state of a file (documents end at `embedded`; indicator packages at `loaded`/`validated`; `activated` for both). */
 export const isFinalState = (s: string, kind: 'document' | 'indicators') => s === 'activated' || (kind === 'document' ? s === 'embedded' : s === 'loaded' || s === 'validated');
@@ -361,6 +362,25 @@ export function emptyScansLabel(jobs: KapJob[], connName: string): string {
   const times = jobs.map((j) => hhmm(j.created_at));
   const span = times.length > 1 ? `${[...times].sort()[0]}–${[...times].sort()[times.length - 1]}` : times[0];
   return `${jobs.length === 1 ? 'Scan' : `${jobs.length} scans`} of ${connName || 'the data source'} found nothing new (${span})`;
+}
+
+/**
+ * What "Run now" should do, so it never makes a run that finds nothing while
+ * another run did (or is doing) the work (seen on the stand, 25 Nov 2026):
+ * - a run of the collection is in progress → show it;
+ * - files are waiting (found but not processed, or failed) → start a run;
+ * - nothing waiting and a run processed files in the last 15 min → show that run;
+ * - otherwise → start a run (its page explains why it found nothing).
+ * `recent`: the collection's runs, newest first.
+ */
+export type RunNowDecision = { kind: 'start' } | { kind: 'join'; job: KapJob; why: 'active' | 'done' };
+export function runNowDecision(recent: KapJob[], waitingFiles: number | null, connectorId: string | null, now: number): RunNowDecision {
+  const mine = recent.filter((x) => !connectorId || !x.connector_id || x.connector_id === connectorId);
+  const active = mine.find((x) => isActiveJob(x));
+  if (active) return { kind: 'join', job: active, why: 'active' };
+  if (waitingFiles == null || waitingFiles > 0) return { kind: 'start' };
+  const worked = mine.find((x) => handled(x) > 0 && now - ms(x.finished_at ?? x.created_at) <= EARLIER_WINDOW_MS);
+  return worked ? { kind: 'join', job: worked, why: 'done' } : { kind: 'start' };
 }
 
 /** Split related runs into those started before this run and those after. */

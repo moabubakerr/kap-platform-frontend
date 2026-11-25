@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { toRun, type KapJob, type KapPipeline } from './fromKap';
 import {
-  failedStep, followUp, hhmm, intervalWords, isZeroRun, laterRuns, earlierWork, splitRelated, isEmptyScan, foldEmptyScans, emptyScansLabel, progressOf, runFiles, runItems, runSteps, stageSteps, triggerOf, zeroExplanation,
+  failedStep, followUp, hhmm, intervalWords, isZeroRun, laterRuns, earlierWork, splitRelated, isEmptyScan, foldEmptyScans, emptyScansLabel, runNowDecision, progressOf, runFiles, runItems, runSteps, stageSteps, triggerOf, zeroExplanation,
   TRIGGER_CONSOLE, TRIGGER_OUTSIDE, type KapFileItem, type RunGroup,
 } from './runView';
 
@@ -215,5 +215,25 @@ describe('empty scans', () => {
     expect(g.map((x) => (x.kind === 'run' ? x.job.id.slice(0, 8) : `${x.jobs.length} empty`))).toEqual(['4d37de26', '8415ebba', '3 empty']);
     const folded = g[2] as Extract<RunGroup, { kind: 'empty' }>;
     expect(emptyScansLabel(folded.jobs, 'qa_s3')).toBe(`3 scans of qa_s3 found nothing new (${hhmm(e1.created_at)}–${hhmm(e3.created_at)})`);
+  });
+});
+
+describe('Run now', () => {
+  // 25 Nov 2026, 1-minute scans: scan 8ffe7095 processed the upload at 12:37; Run now at 12:37:58 made an empty run
+  const NOW2 = Date.parse(at('12:37:58'));
+  const scan = job({ id: '8ffe7095-0000-0000-0000-000000000001', connector_id: CONN, created_at: at('12:37:05'), finished_at: at('12:37:07'), progress: { total: 1, completed: 1, percent: 100 }, result: { succeeded: 1, failed: 0, cancelled: 0 } });
+  const empty = job({ id: '33333333-0000-0000-0000-000000000001', connector_id: CONN, created_at: at('12:36:05'), finished_at: at('12:36:05') });
+
+  it('shows the scan that already did the work instead of starting an empty run', () => {
+    expect(runNowDecision([scan, empty], 0, null, NOW2)).toMatchObject({ kind: 'join', why: 'done', job: { id: scan.id } });
+  });
+  it('joins a run in progress', () => {
+    const busy = job({ ...scan, state: 'running', finished_at: null, result: null, progress: { total: 1, completed: 0, percent: 0 } });
+    expect(runNowDecision([busy], 1, null, NOW2)).toMatchObject({ kind: 'join', why: 'active' });
+  });
+  it('starts a run when files are waiting, or when nothing recent explains an empty run', () => {
+    expect(runNowDecision([scan], 2, null, NOW2).kind).toBe('start');
+    expect(runNowDecision([scan], 0, null, NOW2 + 30 * 60_000).kind).toBe('start');
+    expect(runNowDecision([scan], null, null, NOW2).kind).toBe('start');
   });
 });
