@@ -69,7 +69,9 @@ async function loadBusiness(t: DataTenant, tid: string) {
         if (all != null) obsTotal[c.id] = { total: all, review: review ?? 0 };
       } else {
         const base = `collections/${c.id}/files`;
-        const [all, failed, busy] = await Promise.all([total(tid, base), total(tid, base, { state__in: FAILED_STATES }), total(tid, base, { state__in: BUSY_STATES })]);
+        // documents are done at `embedded`, so it is not "busy" here
+        const busyStates = BUSY_STATES.filter((s) => s !== 'embedded');
+        const [all, failed, busy] = await Promise.all([total(tid, base), total(tid, base, { state__in: FAILED_STATES }), total(tid, base, { state__in: busyStates })]);
         if (all != null) fileTotal[c.id] = all;
         if (failed != null && busy != null) fileStates[c.id] = { failed, busy };
       }

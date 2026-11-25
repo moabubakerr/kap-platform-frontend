@@ -220,8 +220,9 @@ export function parseDocId(id: string): { collection: string; name: string } | n
 
 // ------------------------------------------------------------------ files → documents
 const FAILED = (s: string) => s.startsWith('failed_');
-/** Final state of a file: `activated` for documents; indicator packages end at `loaded` (or later states). */
-const DONE = (s: string, kind: 'indicators' | 'document') => s === 'activated' || (kind === 'indicators' && (s === 'loaded' || s === 'validated'));
+/** Final state of a file. Documents end at `embedded` (KAP guide: "embedded indicates successful document
+ * processing"; verified on the stand); indicator packages at `loaded`/`validated`; `activated` is final for both. */
+const DONE = (s: string, kind: 'indicators' | 'document') => s === 'activated' || (kind === 'document' ? s === 'embedded' : s === 'loaded' || s === 'validated');
 
 /** Processing status (Pending · Processing · Completed · Failed) of a KAP ingest state. */
 export function procStatus(state: string, kind: 'indicators' | 'document' = 'document'): string {

@@ -104,6 +104,8 @@ describe('KAP → Business Data Hub', () => {
   it('formats periods, states and times', () => {
     expect([periodLabel('quarter', '2026-10-01'), periodLabel('month', '2026-03-01'), periodLabel('year', '2025-01-01')]).toEqual(['2026-Q4', '2026-03', '2025']);
     expect([procStatus('pending'), procStatus('embedding'), procStatus('activated'), procStatus('failed_embed'), procStatus('loaded'), procStatus('loaded', 'indicators')]).toEqual(['Pending', 'Processing', 'Completed', 'Failed', 'Processing', 'Completed']);
+    // documents finish at `embedded` (verified on the test stand, 25 Nov 2026)
+    expect([procStatus('embedded'), procStatus('embedded', 'indicators')]).toEqual(['Completed', 'Processing']);
     expect([ago(null, NOW), ago('2026-11-24T11:58:00Z', NOW), ago('2026-11-24T09:00:00Z', NOW), ago('2026-11-20T12:00:00Z', NOW)]).toEqual(['—', '2 min ago', '3 h ago', '4 d ago']);
   });
 });
