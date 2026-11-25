@@ -22,6 +22,7 @@ import {
   checkMessage, isSess, kapOfPipe, kapOfRun, kapOfSource, runId, toKapConnectorCreate, toKapConnectorPatch, toKapPipelineCreate, toKapPipelinePatch, toKapPipelineRestore, toKapRun,
   type KapConnectorCheck, type KapIngest,
 } from './fromKap';
+import { markConsoleRun } from './consoleRuns';
 import { ACTIVE_REFRESH_MS, ensureJobDetail, hasActiveRun, liveIngestStore, loadIngest, setCheck } from './liveIngest';
 import { connectorWizard, kapPipeWizard, sourceTypeFields, typeOfChoice, type ConnMode } from './liveWizards';
 import { finishRun, pipeOf, queueRun, srcOf, startRun, testConn, trigOf, type RunOpts } from './logic';
@@ -204,16 +205,18 @@ export function useIngest(): IngestCtx & { tenant: IngestTenantKey | null; liveS
         return liveSave(live, async () => {
           const r = await kap<{ id: string }>(tid, 'POST', `pipelines/${p.id}/run`, toKapRun(c.id, cid));
           job = r?.id ?? '';
+          // KAP records no trigger: remember the runs this console started (before the reload maps them)
+          markConsoleRun(job);
         }).then((e) => {
           if (e) return e;
           audit('Ran pipeline', `${pid} · collection ${collName}${cid ? ` · connector ${connName}` : ''}${job ? ` · job ${job}` : ''}`);
-          d.toast(`Run ${job ? runId(job) : ''} registered for ${collName}. KAP starts it when a worker is free.`);
+          d.toast(`Run ${job ? runId(job) : ''} registered for ${collName}. KAP starts it when a worker is free; its steps are shown live.`);
           if (job) window.setTimeout(() => go.run(runId(job)), 0);
           return '';
         });
       };
       if (collectionName) {
-        d.confirm(`Run ${pid} again?`, `KAP processes the collection ${collectionName} once more. Files that did not change are not processed again.`, [], 'Run', () => start(collectionName, ''));
+        d.confirm(`Run ${pid} again?`, `KAP processes the collection ${collectionName} once more. Files that did not change are not processed again, and the run does not scan the bucket: a file uploaded just now is found by the data source's next scan, which starts its own run.`, [], 'Run', () => start(collectionName, ''));
         return;
       }
       const fields: FormField[] = [

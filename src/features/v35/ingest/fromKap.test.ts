@@ -127,17 +127,18 @@ describe('pipelines', () => {
 describe('jobs → runs', () => {
   it('maps a finished job with its result', () => {
     const r = toRun(job({ result: { succeeded: 11, failed: 1, cancelled: 0 }, error: null }), NOW, names);
-    expect(r).toMatchObject({ id: 'aaaaaaaa', pipe: 'docs_pipeline', trig: 'Manual · sandbox_public_docs', start: '1 h ago', dur: '1 min 12 s', st: 'Partially succeeded', inN: '12 files', outN: '11 succeeded · 1 failed', errN: 1, items: [] });
+    expect(r).toMatchObject({ id: 'aaaaaaaa', pipe: 'docs_pipeline', trig: 'Manual · started outside the console', start: '1 h ago', dur: '1 min 12 s', st: 'Partially succeeded', inN: '12 files', outN: '11 succeeded · 1 failed', errN: 1, items: [] });
     expect(r.kap).toMatchObject({ job: 'aaaaaaaa-0000-0000-0000-000000000001', collection: 'sandbox_public_docs', detail: true });
-    expect(r.logs.map((l) => l[2])).toEqual(['Run registered for collection sandbox_public_docs', 'A worker started the run', 'Run succeeded · 11 succeeded, 1 failed, 0 cancelled']);
+    expect(r.logs.map((l) => l[2])).toEqual(['Run registered for collection sandbox_public_docs · Manual · started outside the console', 'A worker started the run', 'Found 12 new or changed files', 'Run succeeded · 11 succeeded, 1 failed, 0 cancelled']);
   });
 
   it('maps waiting, running, failed and cancelled jobs', () => {
     const w = toRun(job({ state: 'waiting', running_at: null, finished_at: null, progress: { total: null, completed: 0, percent: null }, connector_id: s3.id }), NOW, names);
-    expect(w).toMatchObject({ st: 'Queued', dur: 'not started', inN: 'Discovering files…', outN: '0 of ? files finished', stages: [], trig: 'Manual · sandbox_public_docs · sbx_docs' });
+    expect(w).toMatchObject({ st: 'Queued', dur: 'not started', inN: 'Counting files…', outN: '0 of ? files finished', stages: [], trig: 'Data source scan · sbx_docs' });
     const run = toRun(job({ state: 'running', finished_at: null, progress: { total: 10, completed: 4, percent: 40 } }), NOW, names);
     expect(run).toMatchObject({ st: 'Running', dur: '1 h 00 min (running)', outN: '4 of 10 files finished' });
-    expect(run.stages[0][5]).toBe('40% of files finished');
+    expect(run.stages).toEqual([]);
+expect(run.kap).toMatchObject({ total: 10, completed: 4, percent: 40 });
     const f = toRun(job({ state: 'failed', result: { succeeded: 0, failed: 0, cancelled: 0 }, error: { code: 'discovery_failed', message: 'The connector is unavailable.' } }), NOW, names);
     expect(f).toMatchObject({ st: 'Failed', errN: 1 });
     expect(f.logs[f.logs.length - 1]).toEqual([expect.any(String), 'ERROR', 'discovery_failed: The connector is unavailable.']);

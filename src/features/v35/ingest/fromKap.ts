@@ -13,6 +13,7 @@
  */
 import type { FormValues } from '@/engine/dialogs';
 import type { IngestTenant, PipeCfg, Pipeline, Run, RunStatus, Source, SourceStatus, Stage } from '@/v35/data/ingest';
+import { triggerOf } from './runView';
 
 // ------------------------------------------------------------------ KAP records (subset of the OpenAPI schemas)
 export interface KapSecretStatus {
@@ -118,6 +119,10 @@ export interface KapIngest {
   models: KapModel[];
   /** last check per connector name (KAP stores no check state; session only) */
   checks: Record<string, KapConnectorCheck>;
+  /** runs KAP reports per pipeline id (`total` of the jobs list) */
+  jobTotals?: Record<string, number>;
+  /** pipelines whose runs could not be read on the last load: name → KAP's message */
+  jobErrors?: Record<string, string>;
 }
 
 // ------------------------------------------------------------------ hub records with their KAP identity
@@ -148,6 +153,11 @@ export interface KapRunRef {
   connector: string;
   state: KapJobState;
   percent: number | null;
+  /** files discovered (null until discovery has finished) and finished */
+  total: number | null;
+  completed: number;
+  createdAt: string;
+  trigger: 'console' | 'scan' | 'outside';
   error: { code: string; message: string } | null;
   /** detail (result, error) loaded */
   detail: boolean;
@@ -357,36 +367,45 @@ export function runStatus(j: Pick<KapJob, 'state' | 'result'>): RunStatus {
 export const ACTIVE_STATES: KapJobState[] = ['waiting', 'running'];
 export const isActiveJob = (j: Pick<KapJob, 'state'>) => ACTIVE_STATES.includes(j.state);
 
-export function toRun(j: KapJob, now: number, names: { pipes: Record<string, string>; colls: Record<string, string>; conns: Record<string, string> }): LiveRun {
+export interface RunNames {
+  pipes: Record<string, string>;
+  colls: Record<string, string>;
+  conns: Record<string, string>;
+  /** the console started this job (`consoleRuns.ts`) */
+  ours?: (jobId: string) => boolean;
+}
+
+export function toRun(j: KapJob, now: number, names: RunNames): LiveRun {
   const st = runStatus(j);
   const active = isActiveJob(j);
   const startIso = j.running_at ?? null;
   const dur = j.finished_at && startIso ? span(Date.parse(j.finished_at) - Date.parse(startIso)) : active && startIso ? `${span(now - Date.parse(startIso))} (running)` : j.finished_at ? '—' : 'not started';
   const coll = names.colls[j.collection_id] ?? 'collection not listed';
   const conn = j.connector_id ? names.conns[j.connector_id] ?? 'connector not listed' : '';
+  const trig = triggerOf(j, conn, !!names.ours?.(j.id));
   const total = j.progress?.total;
   const done = j.progress?.completed ?? 0;
   const R = j.result;
-  const inN = total == null ? (active ? 'Discovering files…' : '—') : `${total.toLocaleString('en-US')} ${total === 1 ? 'file' : 'files'}`;
+  const inN = total == null ? (active ? 'Counting files…' : '—') : total === 0 ? 'No new or changed files' : `${total.toLocaleString('en-US')} ${total === 1 ? 'file' : 'files'}`;
   const outN = R
-    ? [`${R.succeeded.toLocaleString('en-US')} succeeded`, R.failed ? `${R.failed.toLocaleString('en-US')} failed` : '', R.cancelled ? `${R.cancelled.toLocaleString('en-US')} cancelled` : ''].filter(Boolean).join(' · ')
+    ? total === 0 && !R.succeeded && !R.failed && !R.cancelled
+      ? 'Nothing to process'
+      : [`${R.succeeded.toLocaleString('en-US')} succeeded`, R.failed ? `${R.failed.toLocaleString('en-US')} failed` : '', R.cancelled ? `${R.cancelled.toLocaleString('en-US')} cancelled` : ''].filter(Boolean).join(' · ')
     : active
       ? `${done.toLocaleString('en-US')} of ${total == null ? '?' : total.toLocaleString('en-US')} files finished`
       : '—';
   const errN = (R?.failed ?? 0) || (j.state === 'failed' ? 1 : 0);
-  const stageSt = j.state === 'waiting' ? 'Pending' : st;
-  const stages: Stage[] =
-    j.state === 'waiting' && !j.running_at
-      ? []
-      : [['Pipeline run (all stages)', stageSt, dur.replace(' (running)', ''), done, R?.failed ?? 0, j.error ? `${j.error.code}: ${j.error.message}` : j.progress?.percent != null ? `${j.progress.percent}% of files finished` : '']];
-  const logs: [string, string, string][] = [[clock(j.created_at), 'INFO', `Run registered for collection ${coll}${conn ? ` · narrowed to connector ${conn}` : ''}`]];
+  // KAP reports progress per run, not per stage: the run page derives its steps from the files (runView.ts)
+  const stages: Stage[] = [];
+  const logs: [string, string, string][] = [[clock(j.created_at), 'INFO', `Run registered for collection ${coll} · ${trig.label}${conn && trig.kind !== 'scan' ? ` · narrowed to connector ${conn}` : ''}`]];
   if (j.running_at) logs.push([clock(j.running_at), 'INFO', 'A worker started the run']);
+  if (j.progress?.total != null && j.running_at) logs.push(['—', 'INFO', j.progress.total === 0 ? 'No new or changed files to process' : `Found ${j.progress.total} new or changed ${j.progress.total === 1 ? 'file' : 'files'}`]);
   if (j.finished_at) logs.push([clock(j.finished_at), j.state === 'failed' ? 'ERROR' : j.state === 'cancelled' ? 'WARN' : 'INFO', `Run ${j.state}${R ? ` · ${R.succeeded} succeeded, ${R.failed} failed, ${R.cancelled} cancelled` : ''}`]);
   if (j.error) logs.push([clock(j.finished_at), 'ERROR', `${j.error.code}: ${j.error.message}`]);
   return {
     id: runId(j.id),
     pipe: names.pipes[j.pipeline_id] ?? j.pipeline_id.slice(0, 8),
-    trig: `Manual · ${coll}${conn ? ` · ${conn}` : ''}`,
+    trig: trig.label,
     start: rel(j.created_at, now),
     dur,
     st,
@@ -407,6 +426,10 @@ export function toRun(j: KapJob, now: number, names: { pipes: Record<string, str
       connector: conn,
       state: j.state,
       percent: j.progress?.percent ?? null,
+      total: j.progress?.total ?? null,
+      completed: j.progress?.completed ?? 0,
+      createdAt: j.created_at,
+      trigger: trig.kind,
       error: j.error ?? null,
       detail: j.result !== undefined || j.error !== undefined,
     },
@@ -421,7 +444,7 @@ export const sortJobs = (jobs: KapJob[], max = 200) => [...jobs].sort((a, b) => 
  * The hub slice for a live tenant: KAP records, plus the session-only records
  * (non-S3 sources, their pipelines and simulated runs) already in `prev`.
  */
-export function toIngestTenant(K: KapIngest, prev: IngestTenant | undefined, now: number): IngestTenant {
+export function toIngestTenant(K: KapIngest, prev: IngestTenant | undefined, now: number, ours?: (jobId: string) => boolean): IngestTenant {
   const sessSources = (prev?.sources ?? []).filter((s) => isSess(s));
   const sessPipes = (prev?.pipelines ?? []).filter((p) => isSess(p));
   const sessPipeIds = new Set(sessPipes.map((p) => p.id));
@@ -430,8 +453,9 @@ export function toIngestTenant(K: KapIngest, prev: IngestTenant | undefined, now
     pipes: Object.fromEntries(K.pipes.map((p) => [p.id, p.name])),
     colls: Object.fromEntries(K.colls.map((c) => [c.id, c.name])),
     conns: Object.fromEntries(K.conns.map((c) => [c.id, c.name])),
+    ours,
   };
-  const runs = [...K.jobs.map((j) => toRun(j, now, names)), ...sessRuns];
+  const runs =[...K.jobs.map((j) => toRun(j, now, names)), ...sessRuns];
   return {
     sources: [...K.conns.map((c) => toSource(c, now, K.checks[c.name])), ...sessSources],
     pipelines: [...(K.pipes.map((p) => toPipeline(p, K.colls)) as Pipeline[]), ...sessPipes],

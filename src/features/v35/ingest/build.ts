@@ -449,7 +449,28 @@ export const ageDays = (s: string) => {
   return 99;
 };
 
-export function runsScreen(c: IngestCtx, F: ListFilters, setF: (f: ListFilters) => void): ScreenModel {
+/** Data source of a run: a live run's connector (or its pipeline's connectors), else the pipeline's source. */
+export function srcOfRun(H: IngestTenant, r: Run): string {
+  const K = kapOfRun(r);
+  const p = pipeOf(H, r.pipe);
+  if (K) return K.connector || kapOfPipe(p)?.conns.join(', ') || (p ? srcName(p.v) : '');
+  return p ? srcName(p.v) : '';
+}
+
+/** The runs the list's filters keep, in list order. */
+export function filterRuns(H: IngestTenant, F: ListFilters): Run[] {
+  return H.runs.filter(
+    (r) =>
+      anyOk(F, 'pipe', r.pipe) &&
+      (!F.src || F.src.startsWith('Any') || srcOfRun(H, r).split(', ').includes(F.src)) &&
+      anyOk(F, 'st', r.st) &&
+      (!F.per || F.per === 'Any time' || ageDays(r.start) <= (F.per === 'Last 24 hours' ? 1 : 7)) &&
+      qOk(F, `${r.id} ${r.pipe} ${r.trig} ${kapOfRun(r)?.collection ?? ''}`),
+  );
+}
+
+/** `liveTable`: the live tenant's run table (status icons, progress), replacing the plain table. */
+export function runsScreen(c: IngestCtx, F: ListFilters, setF: (f: ListFilters) => void, liveTable?: (runs: Run[]) => Section): ScreenModel {
   const { H } = c;
   const defs: [string, string, string[]][] = [
     ['pipe', 'Pipeline', ['Any pipeline', ...H.pipelines.map((p) => p.id)]],
@@ -457,18 +478,8 @@ export function runsScreen(c: IngestCtx, F: ListFilters, setF: (f: ListFilters) 
     ['st', 'Status', ['Any status', 'Queued', 'Running', 'Succeeded', 'Partially succeeded', 'Failed', 'Cancelled']],
     ['per', 'Period', ['Any time', 'Last 24 hours', 'Last 7 days']],
   ];
-  const srcOfRun = (r: Run) => {
-    const p = pipeOf(H, r.pipe);
-    return p ? srcName(p.v) : '';
-  };
-  const rows = H.runs.filter(
-    (r) =>
-      anyOk(F, 'pipe', r.pipe) &&
-      anyOk(F, 'src', srcOfRun(r)) &&
-      anyOk(F, 'st', r.st) &&
-      (!F.per || F.per === 'Any time' || ageDays(r.start) <= (F.per === 'Last 24 hours' ? 1 : 7)) &&
-      qOk(F, `${r.id} ${r.pipe}`),
-  );
+  const rows = filterRuns(H, F);
+  if (liveTable) return { head: { title: 'Ingestion Runs' }, filters: filterBar(F, setF, defs), sections: [liveTable(rows)] };
   return {
     head: { title: 'Ingestion Runs' },
     filters: filterBar(F, setF, defs),
@@ -480,7 +491,7 @@ export function runsScreen(c: IngestCtx, F: ListFilters, setF: (f: ListFilters) 
         rows: rows.map(
           (r): Row => ({
             key: `r:${r.id}`,
-            cells: [cell(r.id, { m: true }), cell(r.pipe), cell(srcOfRun(r)), cell(r.trig), cell(r.start), cell(r.dur), cell('', { p: [stP(r.st), r.st] }), cell(`${r.inN} → ${r.outN}`), cell(r.errN || '—')],
+            cells: [cell(r.id, { m: true }), cell(r.pipe), cell(srcOfRun(H, r)), cell(r.trig), cell(r.start), cell(r.dur), cell('', { p: [stP(r.st), r.st] }), cell(`${r.inN} → ${r.outN}`), cell(r.errN || '—')],
             acts: [act('View details', () => c.go.run(r.id)), act('View logs', () => c.go.run(r.id, 'errors')), ...(canCancel(c, r) ? [act('Cancel', () => c.a.cancelRun!(r))] : [])],
             onClick: () => c.go.run(r.id),
           }),
@@ -546,15 +557,29 @@ export function runRetry(c: IngestCtx, r: Run) {
   return { p, ty, failed, retryable, acts, note: [retryNote, appendNote].filter(Boolean).join(' ') };
 }
 
-export function runScreen(c: IngestCtx, id: string, tab0: string | undefined, setTab: (t: string) => void, sel: string | null, setSel: (s: string | null) => void): ScreenModel {
+/** Tabs of a live (KAP) run: the step view, the files, the logs. */
+export const LIVE_RUN_TABS = [
+  { value: 'overview', label: 'Overview' },
+  { value: 'items', label: 'Processed Items' },
+  { value: 'errors', label: 'Errors & Logs' },
+];
+
+/** Custom content of a live run page (`LiveRunView.tsx`). */
+export interface LiveRunContent {
+  overview: Section['custom'];
+  items: Section['custom'];
+}
+
+export function runScreen(c: IngestCtx, id: string, tab0: string | undefined, setTab: (t: string) => void, sel: string | null, setSel: (s: string | null) => void, live?: LiveRunContent): ScreenModel {
   const { H } = c;
   const r = H.runs.find((x) => x.id === id);
   if (!r) return notFound(id, `No ingestion run ${id} in this tenant. It may have been purged from history, or the ID is wrong.`, act('Back to runs', c.go.runs));
+  const K = kapOfRun(r);
+  if (K && live) return liveRunScreen(c, r, tab0, setTab, live);
   const tab = RUN_TABS.some((x) => x.value === tab0) ? tab0! : 'overview';
   const head: PageHead = { title: r.id, status: [stP(r.st), r.st], tabs: RUN_TABS, tab, setTab };
   const { p, ty, failed, acts: RA, note } = runRetry(c, r);
   const B = r.batch;
-  const K = kapOfRun(r);
   let sections: Section[] = [];
   if (tab === 'overview')
     sections = [
@@ -668,5 +693,25 @@ export function runScreen(c: IngestCtx, id: string, tab0: string | undefined, se
       },
     ];
   }
+  return { head, sections };
+}
+
+/** A live (KAP) run: the step view (overview), the files of the run, and the failed files and logs. */
+function liveRunScreen(c: IngestCtx, r: Run, tab0: string | undefined, setTab: (t: string) => void, live: LiveRunContent): ScreenModel {
+  const tab = LIVE_RUN_TABS.some((x) => x.value === tab0) ? tab0! : 'overview';
+  const { acts: RA, note } = runRetry(c, r);
+  const head: PageHead = { title: r.id, status: [stP(r.st), r.st], tabs: LIVE_RUN_TABS, tab, setTab, acts: [...RA, act('Back to runs', c.go.runs)] };
+  let sections: Section[];
+  if (tab === 'items') sections = [{ custom: live.items }];
+  else if (tab === 'errors')
+    sections = [
+      {
+        title: 'Logs',
+        note: `What KAP reports for the run. ${r.errN ? 'Failed files are marked on the Processed Items tab.' : ''}`.trim(),
+        cols: ['Time', 'Level', 'Message'],
+        rows: r.logs.map((l, i): Row => ({ key: `lg:${i}`, cells: [cell(l[0], { m: true }), cell('', { p: [l[1] === 'ERROR' ? 'rejected' : l[1] === 'WARN' ? 'hold' : 'draft', l[1]] }), cell(l[2])] })),
+      },
+    ];
+  else sections = [{ custom: live.overview, callout: note || undefined }];
   return { head, sections };
 }
