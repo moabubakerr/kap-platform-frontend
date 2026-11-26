@@ -16,6 +16,8 @@ export interface Store<T> {
   update: (fn: (draft: T) => void) => void;
   use: () => T;
   reset: () => void;
+  /** call `fn` after every change; returns the unsubscribe function */
+  subscribe: (fn: () => void) => () => void;
 }
 
 export function createStore<T>(init: () => T): Store<T> {
@@ -45,6 +47,10 @@ export function createStore<T>(init: () => T): Store<T> {
     reset: () => {
       state = init();
       publish();
+    },
+    subscribe: (fn) => {
+      subs.add(fn);
+      return () => subs.delete(fn);
     },
   };
   return store;

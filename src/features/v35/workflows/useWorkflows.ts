@@ -21,6 +21,9 @@ import {
   agentOf, agentOk, cfgOf, draftOf, fresh, gateOf, hashC, lastRun, MET, nextV, pct, pubOf, simAgent, simEval, wfKey,
 } from './logic';
 import { uiKey, uiStore, type Wd } from './state';
+import { useLiveLoad, type Live } from '@/v35/live';
+import { useAgentsLive } from '@/features/v35/agents/live';
+import { loadWorkflows, startLiveTest, startWfSync, wfLiveStore } from './wfLive';
 
 const EMPTY = EMPTY_TENANT;
 
@@ -35,6 +38,8 @@ export type WfHub = WfCtx & {
   putWd: (w: Workflow, x: Wd | null) => void;
   /** the working copy of version `v` (created from the stored version when needed) */
   wdOf: (w: Workflow, v: string) => Wd;
+  /** live tenant: workflows and runs from the platform API (null for sample tenants) */
+  live: (Live & { missing: boolean }) | null;
 };
 
 export function useWorkflows(): WfHub {
@@ -50,6 +55,15 @@ export function useWorkflows(): WfHub {
   const t: WfTenantKey | null = isAfTenant(key0) ? key0 : null;
   const D = React.useMemo(() => (t ? wfView(af, agColl, t) : EMPTY), [af, agColl, t]);
   const actor = access.uid;
+  // live tenant: KAP agents (for the agent steps) and the platform's workflows and runs
+  useAgentsLive(key0);
+  const wfLoad = useLiveLoad('workflows', key0, (tid) => loadWorkflows(tid, t as WfTenantKey));
+  const wfAll = wfLiveStore.use();
+  const wfMissing = !!(t && wfAll[t]?.missing);
+  const liveTid = wfLoad.on && t ? wfLoad.tenantId : null;
+  React.useEffect(() => {
+    if (liveTid && t) startWfSync(liveTid, t);
+  }, [liveTid, t]);
 
   const canUpd = access.can('agent:update', 'agent', '*');
   const canAppr = access.can('agent:oversee', 'agent', '*');
@@ -75,7 +89,10 @@ export function useWorkflows(): WfHub {
       agent: (id) => nav(`${base}/agents/${encodeURIComponent(id)}`),
       evalset: (id) => nav(`${base}/agents/evaluation/${encodeURIComponent(id)}`),
       evalsets: () => nav(`${base}/agents/evaluation`),
-      run: (id) => nav(`${base}/monitoring/runs/${encodeURIComponent(id)}`),
+      run: (id) => {
+        const wr = liveTid ? fresh0().wfruns.find((r) => r.id === id) : undefined;
+        nav(wr ? `${base}/workflows/${encodeURIComponent(wr.wf)}/runs/${encodeURIComponent(id)}` : `${base}/monitoring/runs/${encodeURIComponent(id)}`);
+      },
       audit: () => nav(`${base}/audit`),
     };
 
@@ -150,6 +167,13 @@ export function useWorkflows(): WfHub {
           d.confirm('Resolve the issues in draft ' + dv.v, 'These must be fixed in the designer before the draft can be submitted:', iss.map((q) => ({ a: q.m, b: '', c: '' })), 'Open designer', () => openDesigner(w, dv.v, { showI: true, mode: 'design' }));
           return;
         }
+      }
+      if (liveTid) {
+        // live: no evaluation gate for workflows yet; the platform runs whatever version is published
+        const pv0 = pubOf(w);
+        const dif0 = pv0 ? diffOf(cfgOf(w, pv0.v), dv.cfg) : [];
+        d.confirm('Publish ' + w.n + ' ' + dv.v + '?', 'Calls to the workflow will run ' + dv.v + ' from now on. ' + (pv0 ? pv0.v + ' becomes superseded and stays available for rollback. ' : '') + 'Test it in the designer first: evaluations of workflows are not available yet.' + (dif0.length ? ' Changes:' : ''), dif0.slice(0, 8), 'Publish', () => activate(w, dv.v, 'Published version'));
+        return;
       }
       const r = lastRun(D0, wfKey(w.id), dv.v);
       if (!r || r.running) { toast('Run the evaluation on ' + dv.v + ' first.'); return; }
@@ -279,6 +303,14 @@ export function useWorkflows(): WfHub {
 
     // ---------------------------------------------------------------- test runs
     const startTest = (w0: Workflow, v: string, q: string, cfgO?: WfCfg | null) => {
+      if (liveTid && t) {
+        // live: a real run on the platform; the designer follows it
+        void startLiveTest(liveTid, t, w0, v, q, cfgO ?? null, actor).then((err) => {
+          if (err) d.info('The test could not start', err);
+          else ev('Ran test', nameV(w0, v));
+        });
+        return;
+      }
       const D0 = fresh0();
       const w = D0.workflows.find((x) => x.id === w0.id) || w0;
       const cfg = cfgO || cfgOf(w, v);
@@ -400,6 +432,8 @@ export function useWorkflows(): WfHub {
       canRead: (ag: string) => can('agent:read', 'agent', ag),
       canUpd, canAppr, canOps, canCreate, canExec,
       go, a, saveDesign, startTest, setVer, putWd, wdOf,
+      live: wfLoad.on ? { ...wfLoad, missing: wfMissing } : null,
+      liveRuns: !!liveTid,
     };
-  }, [t, D, ui, actor, can, canUpd, canAppr, canOps, canCreate, canExec, base, nav, d]);
+  }, [t, D, ui, actor, can, canUpd, canAppr, canOps, canCreate, canExec, base, nav, d, liveTid, wfLoad, wfMissing]);
 }

@@ -72,6 +72,8 @@ export interface WfCtx {
   canExec: boolean;
   go: WfNav;
   a: WfActs;
+  /** live tenant: runs are real platform runs with their own page */
+  liveRuns?: boolean;
 }
 
 export type ListFilters = { q?: string; st?: string };
@@ -337,7 +339,7 @@ export function execStepsSec(c: WfCtx, w: Workflow, vsel: string): Section[] {
   if (!x || x.v !== vsel || x.mode === 'design') return [];
   const T0 = c.ui.test[k];
   const testOv = x.mode === 'test' && T0 && T0.ver === vsel ? T0 : null;
-  let RS: { steps?: [string, string, string, string, string?][]; path: Record<string, string> } | null = null;
+  let RS: { id?: string; steps?: [string, string, string, string, string?][]; path: Record<string, string> } | null = null;
   if (x.mode === 'test') RS = testOv && !testOv.running ? testOv : null;
   else {
     const runsW = c.D.wfruns.filter((r) => r.wf === w.id);
@@ -352,6 +354,7 @@ export function execStepsSec(c: WfCtx, w: Workflow, vsel: string): Section[] {
   });
   return [{
     title: 'Execution steps',
+    sacts: c.liveRuns && RS.id ? [act('Open run', () => c.go.run(RS!.id!))] : undefined,
     cols: ['#', 'Step', 'Type', 'Status', 'Detail'],
     mode: 'inline',
     rows: steps.map((s0, i): Row => ({
@@ -374,8 +377,19 @@ export function workflowScreen(c: WfCtx, id: string, tab0: string | undefined, s
   const cfg = cfgOf(w, vsel);
   const agentsIn = agentsInG(cfg);
   let sections: Section[] = [];
+  const waiting = D.wfruns.filter((r) => r.wf === w.id && r.st === 'Waiting for review');
   if (tab === 'overview')
     sections = [
+      ...(waiting.length
+        ? [{
+            title: 'Waiting for a person',
+            badge: String(waiting.length),
+            note: 'These runs stopped at a human review or hand-over step. Open one to approve, edit or reject the answer.',
+            mode: 'inline' as const,
+            cols: ['Run', 'Request', 'Version', 'Started'],
+            rows: waiting.map((r): Row => ({ key: 'wt:' + r.id, cells: [cell(r.id.slice(0, 8), { m: true }), cell(r.q), cell(r.v), cell(r.at)], acts: [act('Open', () => c.go.run(r.id))], onClick: () => c.go.run(r.id) })),
+          }]
+        : []),
       {
         form: true,
         sacts: [act('Open designer', () => setTab('designer'))],

@@ -110,6 +110,7 @@ export const router = createBrowserRouter([
       { path: 'workflows', element: V('workflows/WorkflowsPage') },
       { path: 'workflows/map', element: V('workflows/AgentsMapPage') },
       { path: 'workflows/ask-ai-pipeline', element: L(() => import('@/features/agents-map/AgentsMapPage')) },
+      { path: 'workflows/:workflowId/runs/:runId', element: V('workflows/WorkflowRunPage') },
       { path: 'workflows/:workflowId/:tab?', element: V('workflows/WorkflowPage') },
       { path: 'tools', element: V('tools/ToolsPage') },
       { path: 'tools/mcp/:serverId?', element: V('tools/McpConnectionsPage') },

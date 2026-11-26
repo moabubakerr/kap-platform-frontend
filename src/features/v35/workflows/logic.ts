@@ -27,7 +27,7 @@ export const agentLifeP = (a: AgentRef): [DsStatus, string] =>
   a.dis ? ['rejected', 'Disabled'] : a.st === 'Archived' ? ['draft', 'Archived'] : a.st === 'Published' ? (a.draft ? ['approved', 'Published · draft open'] : ['approved', 'Published']) : ['submitted', 'Draft'];
 export const verP = (s: string): [DsStatus, string] => (({ Published: ['approved', 'Published'], Draft: ['submitted', 'Draft'], Superseded: ['draft', 'Superseded'], Archived: ['draft', 'Archived'] }) as Record<string, [DsStatus, string]>)[s] || ['draft', s];
 export const stP = (s: string): [DsStatus, string] =>
-  (({ Succeeded: ['approved', 'Succeeded'], 'Succeeded with fallback': ['hold', 'Succeeded with fallback'], Failed: ['rejected', 'Failed'], Running: ['submitted', 'Running'], Cancelled: ['draft', 'Cancelled'], Reproduction: ['hold', 'Reproduction'] }) as Record<string, [DsStatus, string]>)[s] || ['draft', s];
+  (({ Succeeded: ['approved', 'Succeeded'], 'Succeeded with fallback': ['hold', 'Succeeded with fallback'], Failed: ['rejected', 'Failed'], Running: ['submitted', 'Running'], Cancelled: ['draft', 'Cancelled'], 'Waiting for review': ['hold', 'Waiting for review'], Reproduction: ['hold', 'Reproduction'] }) as Record<string, [DsStatus, string]>)[s] || ['draft', s];
 
 export const pct = (x: number | null | undefined) => (x == null ? '—' : Math.round(x * 1000) / 10 + '%');
 

@@ -310,7 +310,7 @@ function qs(q?: Query): string {
 export const pgUrl = (tenantId: string, path: string, q?: Query) => `/api/platform/t/${tenantId}/${path.replace(/^\/+/, '')}${qs(q)}`;
 
 /** One platform call. Resolves to the JSON body (undefined for 204). */
-export async function pgCall<T = unknown>(tenantId: string, method: 'GET' | 'POST' | 'PATCH' | 'DELETE', path: string, body?: unknown, q?: Query): Promise<T> {
+export async function pgCall<T = unknown>(tenantId: string, method: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE', path: string, body?: unknown, q?: Query): Promise<T> {
   let r: Response;
   try {
     r = await fetch(pgUrl(tenantId, path, q), {

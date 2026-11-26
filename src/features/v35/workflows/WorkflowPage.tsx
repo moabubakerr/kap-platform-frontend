@@ -4,6 +4,7 @@ import { ScreenView } from '@/engine/ScreenView';
 import { WF_TABS, wfTabOf, workflowScreen } from './build';
 import { Designer } from './Designer';
 import { useWorkflows } from './useWorkflows';
+import { WfLiveBanner } from './WfLiveBanner';
 
 /** Workflow details (route /workflows/:workflowId/:tab?): Overview · Designer · Evaluation · Versions · Metrics. */
 export default function WorkflowPage() {
@@ -12,5 +13,10 @@ export default function WorkflowPage() {
   const model = workflowScreen(c, workflowId, tab, (v) => c.go.wf(workflowId, v), (w, vsel) => <Designer hub={c} w={w} vsel={vsel} />);
   const w = c.D.workflows.find((x) => x.id === workflowId);
   useCrumbs([w ? w.n : workflowId, WF_TABS.find((x) => x.value === wfTabOf(tab))?.label]);
-  return <ScreenView model={model} />;
+  return (
+    <>
+      <WfLiveBanner c={c} />
+      <ScreenView model={model} />
+    </>
+  );
 }
