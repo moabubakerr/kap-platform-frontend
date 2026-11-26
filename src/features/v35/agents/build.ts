@@ -40,7 +40,8 @@ export interface AgentsNav {
 export interface CaseSeed { q: string; key: string; lang: string; cat: string; run: string; evid: string; exp?: string }
 
 export interface AgentsActs {
-  create: () => void;
+  /** opens the create wizard; `preset` pre-selects collections (live tenant) */
+  create: (preset?: { colls?: string[] }) => void;
   createDraft: (key: string, note?: string, thenTab?: string) => void;
   archive: (a: Agent) => void;
   disable: (key: string) => void;

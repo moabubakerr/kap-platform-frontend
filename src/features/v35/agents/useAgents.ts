@@ -714,7 +714,7 @@ export function useAgents(): AgentsCtx & { tenant: AfTenantKey | null; liveState
           },
         },
       };
-      a.create = () => {
+      a.create = (preset) => {
         const o = agentsLiveStore.get().opts;
         d.wizard(
           liveAgentWizard(o, DD().agents.map((x) => x.id), (v) => {
@@ -735,7 +735,7 @@ export function useAgents(): AgentsCtx & { tenant: AfTenantKey | null; liveState
                 go.agent(body.name, 'testing');
               },
             );
-          }),
+          }, preset),
         );
       };
       a.archive = (ag) => live!.a.remove(ag);

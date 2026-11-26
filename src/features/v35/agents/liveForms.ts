@@ -7,7 +7,7 @@
 import type { FormField, FormValues, SaveResult, WizardSpec } from '@/engine/dialogs';
 import { KAP_LIMITS, NAME_HINT, NAME_RE, NONE, parseLimit, splitList, toKapCreate, TYPE_L, type KapAgent, type KapEdit, type LiveOpts } from './fromKap';
 import {
-  BLOCK_START, ENTITY_MODE_L, needsSearch, roleLine, SEARCH_TOOL, searchBlock, searchTargets, withSearchBlock,
+  BLOCK_START, ENTITY_MODE_L, NO_SOURCE_ENTITY, needsSearch, roleLine, SEARCH_TOOL, searchBlock, searchTargets, withSearchBlock,
   type CollSearchInfo, type EntityIdChoice, type EntityIdMode,
 } from './searchBlock';
 
@@ -18,7 +18,7 @@ export const choiceOfValues = (v: FormValues): EntityIdChoice => ({ mode: MODE_O
 /** Fields of the "Search entity id" setting. */
 export function entityIdFields(c: EntityIdChoice, groups: string[]): FormField[] {
   return [
-    { k: 'eidMode', label: 'Search entity id', type: 'select', opts: [ENTITY_MODE_L.group, ENTITY_MODE_L.fixed], val: ENTITY_MODE_L[c.mode], hint: `Collection document group: ${groups.length ? groups.slice(0, 3).join(', ') + (groups.length > 3 ? ' …' : '') : 'none found yet'} (derived from the files' folders; the first group is used when there are several). Fixed value: the text below.` },
+    { k: 'eidMode', label: 'Search entity id', type: 'select', opts: [ENTITY_MODE_L.fixed, ENTITY_MODE_L.group], val: ENTITY_MODE_L[c.mode], hint: `Fixed value (default "none"): hybrid_search leaves out the entity given here, so a value that is no group searches everything. Collection document group: ${groups.length ? groups.slice(0, 3).join(', ') + (groups.length > 3 ? ' …' : '') : 'none found yet'} (derived from the files' folders; the first group is used when there are several). Fixed value: the text below.` },
     { k: 'eidValue', label: 'Fixed value', type: 'text', val: c.value, ph: 'Only with "Fixed value"' },
     { type: 'note', tone: 'info', text: 'Which entity_id hybrid_search expects is not confirmed yet. This choice is kept in this browser only (not in KAP); it decides what the search instructions write into the system prompt.' },
   ];
@@ -119,12 +119,27 @@ export function validateLiveStep(o: { names: string[] }, step: number, v: FormVa
   return '';
 }
 
-export function liveAgentWizard(o: LiveOpts, names: string[], finish: (v: FormValues) => SaveResult): WizardSpec {
+/** Preset for a new agent, e.g. from a records dataset: its document collection, searched with hybrid_search. */
+export interface AgentPreset {
+  colls?: string[];
+}
+
+export function liveAgentWizard(o: LiveOpts, names: string[], finish: (v: FormValues) => SaveResult, preset?: AgentPreset): WizardSpec {
   return {
     title: 'Create agent',
     steps: LIVE_WIZARD_STEPS,
     finishL: 'Create in KAP',
-    initial: { type: TYPE_L.workflow, colls: [], tools: [], inSchema: NONE, outSchema: NONE, model: o.models[0] || '', eidMode: ENTITY_MODE_L.group, eidValue: '' },
+    initial: {
+      type: preset?.colls?.length ? TYPE_L.planner_and_executor : TYPE_L.workflow,
+      colls: preset?.colls ?? [],
+      tools: preset?.colls?.length ? [SEARCH_TOOL] : [],
+      inSchema: NONE,
+      outSchema: NONE,
+      model: o.models[0] || '',
+      // verified on the stand: entity_id is the entity hybrid_search leaves out, so the default is a non-group value
+      eidMode: ENTITY_MODE_L.fixed,
+      eidValue: NO_SOURCE_ENTITY,
+    },
     fields: (step, v, set) => (step === 1 ? instructionFields(o, v, set) : liveWizardFields(o, step, v)),
     validate: (step, v, set) => {
       const e = validateLiveStep({ names }, step, v);
