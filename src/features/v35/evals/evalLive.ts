@@ -5,7 +5,8 @@
  */
 import { createStore } from '@/engine/store';
 import { PgApiError } from '@/api/platformPg';
-import { getEvalRun, getEvalSet, listEvalRuns, listEvalSets, type EvalRun, type EvalSet } from '@/api/platformEval';
+import { getEvalRun, getEvalSet, listEvalRuns, listEvalSchedules, listEvalSets, type EvalRun, type EvalSchedule, type EvalSet } from '@/api/platformEval';
+import { listWorkflows } from '@/api/platformWf';
 import { liveTenantId, useLiveLoad } from '@/v35/live';
 import { isActiveRun } from './evalView';
 
@@ -14,12 +15,15 @@ export interface EvalState {
   missing: boolean;
   sets: EvalSet[];
   runs: EvalRun[];
+  schedules: EvalSchedule[];
+  /** platform workflows (for workflow targets): id, name, versions */
+  workflows: { id: string; name: string; versions: { v: string; st: string }[] }[];
   /** single reads: set with its cases, run with its results */
   set: Record<string, EvalSet>;
   run: Record<string, EvalRun>;
 }
 
-const EMPTY = (): EvalState => ({ missing: false, sets: [], runs: [], set: {}, run: {} });
+const EMPTY = (): EvalState => ({ missing: false, sets: [], runs: [], schedules: [], workflows: [], set: {}, run: {} });
 export const evalStore = createStore<Record<string, EvalState>>(() => ({}));
 
 export const EVAL_ACTIVE_REFRESH_MS = 3_000;
@@ -37,10 +41,18 @@ const missing = (e: unknown) => e instanceof PgApiError && e.routeMissing;
 export async function loadEvals(tid: string) {
   try {
     const [sets, runs] = await Promise.all([listEvalSets(tid), listEvalRuns(tid, { limit: 200 })]);
+    // optional: schedules and workflows came with later platform versions
+    const [scheds, wfs] = await Promise.all([listEvalSchedules(tid).catch(() => null), listWorkflows(tid).catch(() => null)]);
     put(tid, (s) => {
       s.missing = false;
       s.sets = sets.items;
       s.runs = runs.items;
+      s.schedules = scheds?.items ?? [];
+      s.workflows = (wfs?.items ?? []).map((w) => ({
+        id: w.id,
+        name: String((w.doc as { n?: string }).n ?? w.id),
+        versions: ((w.doc as { vers?: { v: string; st: string }[] }).vers ?? []).map((x) => ({ v: x.v, st: x.st })),
+      }));
     });
   } catch (e) {
     if (missing(e)) return put(tid, (s) => void (s.missing = true));

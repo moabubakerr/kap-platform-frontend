@@ -29,6 +29,8 @@ export interface EvalCase {
 export type EvalCaseIn = Pick<EvalCase, 'question'> & Partial<Pick<EvalCase, 'expected' | 'must_include' | 'must_not_include' | 'tags'>>;
 
 export type EvalRunStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
+export type EvalTargetKind = 'agent' | 'workflow';
+export type EvalTrigger = 'manual' | 'schedule' | 'data';
 export type EvalResultStatus = 'pending' | 'submitted' | 'answered' | 'scored' | 'error';
 
 export interface EvalSummary {
@@ -56,6 +58,10 @@ export interface EvalRunBrief {
   id: string;
   status: EvalRunStatus;
   agent_name: string | null;
+  target_kind?: EvalTargetKind;
+  workflow_id?: string | null;
+  version?: string | null;
+  regressed?: boolean | null;
   summary: EvalSummary | null;
   created_at: string;
   finished_at: string | null;
@@ -103,6 +109,9 @@ export interface EvalMetrics {
   tool_calls?: number;
   tool_errors?: number;
   tools?: string[];
+  /** workflow target: 'label (kind): status' per step that ran */
+  steps?: string[];
+  agent_jobs?: number;
 }
 
 export interface EvalResult {
@@ -115,6 +124,8 @@ export interface EvalResult {
   must_not_include: string[];
   status: EvalResultStatus;
   job_id: string | null;
+  /** workflow target: the workflow run of this question */
+  wf_run_id: string | null;
   job_status: string | null;
   answer: string | null;
   checks: EvalCheck[] | null;
@@ -132,10 +143,20 @@ export interface EvalRun {
   id: string;
   set_id: string;
   set_name: string;
-  agent_id: string;
+  target_kind: EvalTargetKind;
+  /** agent target: KAP agent id */
+  agent_id: string | null;
+  /** agent target: agent name; workflow target: workflow name */
   agent_name: string | null;
-  /** agent settings when the run started */
-  agent: { name?: string; type?: string; model_ref?: string; collections?: string[]; allowed_tools?: string[]; updated_at?: string } | null;
+  /** workflow target */
+  workflow_id: string | null;
+  version: string | null;
+  trigger: EvalTrigger;
+  /** null: nothing to compare with */
+  regressed: boolean | null;
+  regress_reason: string | null;
+  /** settings when the run started: an agent's, or {kind: 'workflow', version, cfg} */
+  agent: { kind?: 'workflow'; name?: string; type?: string; model_ref?: string; collections?: string[]; allowed_tools?: string[]; updated_at?: string; version?: string; status?: string; cfg?: unknown } | null;
   label: string;
   options: EvalOptions;
   status: EvalRunStatus;
@@ -150,7 +171,10 @@ export interface EvalRun {
 
 export interface EvalRunStart {
   set_id: string;
-  agent_id: string;
+  agent_id?: string;
+  workflow_id?: string;
+  /** workflow version; default: the published one */
+  version?: string;
   label?: string;
   judge?: boolean;
   min_correctness?: number;
@@ -169,9 +193,46 @@ export const addEvalCases = (tid: string, setId: string, cases: EvalCaseIn[], re
 export const patchEvalCase = (tid: string, setId: string, caseId: string, body: Partial<EvalCaseIn>) => pgCall<EvalCase>(tid, 'PATCH', `eval-sets/${setId}/cases/${caseId}`, body);
 export const deleteEvalCase = (tid: string, setId: string, caseId: string) => pgCall<void>(tid, 'DELETE', `eval-sets/${setId}/cases/${caseId}`);
 
-export const listEvalRuns = (tid: string, q: { set_id?: string; agent_id?: string; limit?: number; offset?: number } = {}) => pgCall<PgPage<EvalRun>>(tid, 'GET', 'eval-runs', undefined, { limit: 100, ...q });
+export const listEvalRuns = (tid: string, q: { set_id?: string; agent_id?: string; workflow_id?: string; limit?: number; offset?: number } = {}) => pgCall<PgPage<EvalRun>>(tid, 'GET', 'eval-runs', undefined, { limit: 100, ...q });
 export const getEvalRun = (tid: string, id: string) => pgCall<EvalRun>(tid, 'GET', `eval-runs/${id}`);
 /** 409 when the set is already running against the agent; 422 when the set has no questions. */
 export const startEvalRun = (tid: string, body: EvalRunStart) => pgCall<EvalRun>(tid, 'POST', 'eval-runs', body);
 export const cancelEvalRun = (tid: string, id: string) => pgCall<EvalRun>(tid, 'POST', `eval-runs/${id}/cancel`);
 export const deleteEvalRun = (tid: string, id: string) => pgCall<void>(tid, 'DELETE', `eval-runs/${id}`);
+
+// ------------------------------------------------------------------ automatic runs
+export interface EvalSchedule {
+  id: string;
+  set_id: string;
+  target_kind: EvalTargetKind;
+  agent_id: string | null;
+  workflow_id: string | null;
+  /** null: not on a schedule */
+  every_minutes: number | null;
+  /** after a PostgreSQL export into one of the target's collections */
+  on_data: boolean;
+  /** 0–1: a run below it is marked regressed */
+  min_pass_rate: number | null;
+  options: Partial<EvalOptions>;
+  enabled: boolean;
+  next_run_at: string | null;
+  data_seen_at: string | null;
+  last_run_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+export interface EvalScheduleIn {
+  set_id: string;
+  agent_id?: string;
+  workflow_id?: string;
+  every_minutes?: number | null;
+  on_data?: boolean;
+  min_pass_rate?: number | null;
+  options?: Partial<EvalOptions>;
+  enabled?: boolean;
+}
+
+export const listEvalSchedules = (tid: string, setId?: string) => pgCall<PgPage<EvalSchedule>>(tid, 'GET', 'eval-schedules', undefined, { set_id: setId });
+export const createEvalSchedule = (tid: string, body: EvalScheduleIn) => pgCall<EvalSchedule>(tid, 'POST', 'eval-schedules', body);
+export const patchEvalSchedule = (tid: string, id: string, body: Partial<Omit<EvalScheduleIn, 'set_id' | 'agent_id' | 'workflow_id'>>) => pgCall<EvalSchedule>(tid, 'PATCH', `eval-schedules/${id}`, body);
+export const deleteEvalSchedule = (tid: string, id: string) => pgCall<void>(tid, 'DELETE', `eval-schedules/${id}`);

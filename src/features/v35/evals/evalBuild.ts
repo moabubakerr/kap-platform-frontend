@@ -6,11 +6,12 @@
  */
 import { act, cell, fr } from '@/engine/build';
 import type { Action, KV, Row, ScreenModel, Section } from '@/engine/types';
-import type { EvalCase, EvalResult, EvalRun, EvalSet } from '@/api/platformEval';
+import type { EvalCase, EvalResult, EvalRun, EvalSchedule, EvalSet } from '@/api/platformEval';
 import { EVAL_FEATURE_MISSING } from '@/api/platformEval';
 import { relTime } from '@/features/v35/agents/fromKap';
 import {
-  agentChanges, CHANGE_PILL, compareHeadline, compareRuns, fmtMs, fmtTokens, isActiveRun, judgeLine, pct, resultPill, runLabelOf, runOutcome, runPill, score5, summaryStats,
+  agentChanges, CHANGE_PILL, compareHeadline, compareRuns, fmtMs, fmtTokens, isActiveRun, judgeLine, passTrend, pct, resultPill, runLabelOf, runOutcome, runPill, scheduleText, score5,
+  summaryStats, targetLabel, TRIGGER_L, WF_GATE_MIN, wfGate,
 } from './evalView';
 import type { EvalState } from './evalLive';
 
@@ -21,6 +22,18 @@ export interface EvalNav {
   /** agent page by agent name */
   agent: (name: string) => void;
   trace: (jobId: string) => void;
+  /** workflow page (Evaluation tab) */
+  workflow: (id: string) => void;
+  /** one workflow run */
+  wfRun: (workflowId: string, runId: string) => void;
+}
+
+/** What a run or schedule targets: an agent (KAP id) or a workflow (and version). */
+export interface EvalTarget {
+  setId?: string;
+  agentId?: string;
+  workflowId?: string;
+  version?: string;
 }
 
 export interface EvalActions {
@@ -31,8 +44,12 @@ export interface EvalActions {
   editCase: (s: EvalSet, c: EvalCase) => void;
   deleteCase: (s: EvalSet, c: EvalCase) => void;
   importCsv: (s: EvalSet) => void;
-  /** start a run; preset the test set and/or agent (KAP id) */
-  run: (p: { setId?: string; agentId?: string }) => void;
+  /** start a run; preset the test set and/or the target */
+  run: (p: EvalTarget) => void;
+  /** automatic runs of a test set */
+  addSchedule: (p: EvalTarget) => void;
+  editSchedule: (s: EvalSchedule) => void;
+  deleteSchedule: (s: EvalSchedule) => void;
   cancel: (r: EvalRun) => void;
   removeRun: (r: EvalRun) => void;
   compareWith: (r: EvalRun) => void;
@@ -49,6 +66,8 @@ export interface EvalCtx {
   canRun: boolean;
   /** KAP agents: id = KAP id */
   agents: { id: string; name: string }[];
+  /** platform workflows and their versions */
+  workflows: { id: string; name: string; versions: { v: string; st: string }[] }[];
   a: EvalActions;
   go: EvalNav;
 }
@@ -76,15 +95,15 @@ function runsSection(c: EvalCtx, runs: EvalRun[], title: string, opts: { showSet
     sacts: opts.sacts,
     mode: 'inline',
     empty: opts.empty ?? (c.loading ? 'Loading runs…' : 'No evaluation runs yet.'),
-    cols: ['Run', ...(showSet ? ['Test set'] : []), ...(showAgent ? ['Agent'] : []), 'Result', 'Pass rate', 'Correctness', 'Started'],
+    cols: ['Run', ...(showSet ? ['Test set'] : []), ...(showAgent ? ['Agent or workflow'] : []), 'Result', 'Pass rate', 'Correctness', 'Started'],
     rows: runs.map((r) => ({
       ...row(
         'er:' + r.id,
         [
-          cell(runLabel(r, c.now), { sub: r.label ? relTime(r.created_at, c.now) : undefined }),
+          cell(runLabel(r, c.now), { sub: r.trigger && r.trigger !== 'manual' ? TRIGGER_L[r.trigger] : r.label ? relTime(r.created_at, c.now) : undefined }),
           ...(showSet ? [cell(r.set_name)] : []),
-          ...(showAgent ? [cell(r.agent_name ?? r.agent_id.slice(0, 8), { m: true, sub: r.agent?.model_ref })] : []),
-          cell('', { p: runPill(r), sub: runOutcome(r) }),
+          ...(showAgent ? [cell(targetLabel(r), { m: r.target_kind !== 'workflow', sub: r.target_kind === 'workflow' ? 'Workflow' : r.agent?.model_ref })] : []),
+          cell('', { p: runPill(r), sub: r.regressed && r.regress_reason ? trunc(r.regress_reason, 90) : runOutcome(r) }),
           cell(pct(r.summary?.pass_rate)),
           cell(score5(r.summary?.correctness)),
           cell(relTime(r.started_at ?? r.created_at, c.now)),
@@ -178,8 +197,56 @@ export function setScreen(c: EvalCtx, setId: string): ScreenModel {
           acts: c.canEdit ? [act('Edit', () => c.a.editCase(s, x)), act('Delete', () => c.a.deleteCase(s, x), 'danger')] : [],
         })),
       },
-      runsSection(c, runs, 'Runs of this test set', { showSet: false, empty: 'Not run yet.' }),
+      { ...runsSection(c, runs, 'Runs of this test set', { showSet: false, empty: 'Not run yet.' }), note: trendNote(runs) },
+      schedulesSection(c, (c.st?.schedules ?? []).filter((x) => x.set_id === s.id), { setId: s.id }),
     ],
+  };
+}
+
+/** "Pass rate over the last runs: 50% → 75% → 100%" per target. */
+export function trendNote(runs: EvalRun[]): string | undefined {
+  const by = new Map<string, EvalRun[]>();
+  for (const r of runs) {
+    const k = targetLabel({ ...r, version: null });
+    by.set(k, [...(by.get(k) ?? []), r]);
+  }
+  const lines = [...by.entries()]
+    .map(([k, rs]) => [k, passTrend(rs).slice(-6)] as const)
+    .filter(([, t]) => t.length > 1)
+    .map(([k, t]) => `${k}: ${t.map((x) => pct(x)).join(' → ')}`);
+  return lines.length ? 'Pass rate over the last runs · ' + lines.join(' · ') : undefined;
+}
+
+function schedTarget(c: EvalCtx, s: EvalSchedule): string {
+  if (s.target_kind === 'workflow') return (c.workflows.find((w) => w.id === s.workflow_id)?.name ?? s.workflow_id ?? '—') + ' (published version)';
+  return c.agents.find((a) => a.id === s.agent_id)?.name ?? (s.agent_id ?? '').slice(0, 8);
+}
+
+/** Automatic runs: on a schedule and/or after new data; a drop is marked as a regression. */
+export function schedulesSection(c: EvalCtx, scheds: EvalSchedule[], preset: EvalTarget): Section {
+  const sets = c.st?.sets ?? [];
+  return {
+    title: 'Automatic runs',
+    badge: String(scheds.length),
+    note: 'Runs the test set on a schedule, or after a PostgreSQL export reloads the data of the agent (or of the workflow’s agents). A run whose pass rate falls, or where a question that passed now fails, is marked Regressed.',
+    sacts: c.canEdit && sets.length ? [act('Add automatic run', () => c.a.addSchedule(preset))] : [],
+    mode: 'inline',
+    empty: 'None. Add one to catch regressions without running the test set by hand.',
+    cols: ['Test set', 'Agent or workflow', 'When', 'Next run', 'Last run'],
+    rows: scheds.map((s) => {
+      const last = s.last_run_id ? (c.st?.runs ?? []).find((r) => r.id === s.last_run_id) : undefined;
+      return row(
+        'sc:' + s.id,
+        [
+          cell(sets.find((x) => x.id === s.set_id)?.name ?? '—'),
+          cell(schedTarget(c, s)),
+          cell(scheduleText(s)),
+          cell(s.enabled && s.next_run_at ? relTime(s.next_run_at, c.now).replace(' ago', '').replace('just now', 'now') : s.on_data ? 'When new data arrives' : '—'),
+          last ? cell('', { p: runPill(last), sub: relTime(last.created_at, c.now) }) : cell('Not yet'),
+        ],
+        [...(last ? [act('Open run', () => c.go.run(last.id))] : []), ...(c.canEdit ? [act('Edit', () => c.a.editSchedule(s)), act('Delete', () => c.a.deleteSchedule(s), 'danger')] : [])],
+      );
+    }),
   };
 }
 
@@ -197,8 +264,10 @@ function resultKv(x: EvalResult): KV[] {
   kv.push({ k: 'Time', v: `${fmtMs(m.latency_ms)}${m.queue_ms ? ` · queued ${fmtMs(m.queue_ms)}` : ''}` });
   if (m.tools?.length) kv.push({ k: 'Tools', v: m.tools.join(', ') + (m.tool_errors ? ` · ${m.tool_errors} failed` : '') });
   if (m.tokens != null) kv.push({ k: 'Tokens', v: fmtTokens(m.tokens) });
+  if (m.steps?.length) kv.push({ k: 'Workflow steps', v: m.steps.join('\n') });
   if (x.error) kv.push({ k: 'Error', v: x.error });
   if (x.job_id) kv.push({ k: 'KAP job', v: x.job_id, mono: true });
+  if (x.wf_run_id) kv.push({ k: 'Workflow run', v: x.wf_run_id, mono: true });
   return kv;
 }
 
@@ -220,15 +289,20 @@ export function runScreen(c: EvalCtx, runId: string, vsId?: string | null): Scre
   const results = c.st?.run[runId]?.results;
   const vs = vsId ? c.st?.run[vsId] : undefined;
   const sections: Section[] = [];
+  const wf = r.target_kind === 'workflow';
   if (r.status === 'failed') sections.push({ callout: `The run stopped: ${r.error ?? 'unknown error'}. Results so far are kept below.` });
-  if (active) sections.push({ callout: `Running: ${runOutcome(r)}. Questions go to the agent ${o.parallel} at a time; this page updates every few seconds.` });
+  if (r.regressed) sections.push({ callout: `Regressed against the previous run: ${r.regress_reason ?? 'the pass rate fell'}. Use Compare with… to see every question.` });
+  if (active) sections.push({ callout: `Running: ${runOutcome(r)}. Questions go to the ${wf ? 'workflow' : 'agent'} ${o.parallel} at a time; this page updates every few seconds.` });
   sections.push({ stats: summaryStats(r.summary, o.judge) });
   sections.push({
     form: true,
     title: 'Run',
     rows: [
       fr('Test set', r.set_name, '', [act('Open', () => c.go.set(r.set_id))]),
-      fr('Agent', r.agent_name ?? r.agent_id, [r.agent?.model_ref && `Model ${r.agent.model_ref}`, r.agent?.collections?.length ? `Collections ${r.agent.collections.join(', ')}` : ''].filter(Boolean).join(' · '), r.agent_name ? [act('Open', () => c.go.agent(r.agent_name!))] : []),
+      wf
+        ? fr('Workflow', targetLabel(r), r.agent?.status ? `${r.agent.status} version when the run started` : '', r.workflow_id ? [act('Open', () => c.go.workflow(r.workflow_id!))] : [])
+        : fr('Agent', targetLabel(r), [r.agent?.model_ref && `Model ${r.agent.model_ref}`, r.agent?.collections?.length ? `Collections ${r.agent.collections.join(', ')}` : ''].filter(Boolean).join(' · '), r.agent_name ? [act('Open', () => c.go.agent(r.agent_name!))] : []),
+      fr('Started by', TRIGGER_L[r.trigger ?? 'manual']),
       fr('Scoring', o.judge ? `Facts and AI judge` : 'Facts only', o.judge ? `Passes with every fact found and correctness ≥ ${o.min_correctness}/5${o.min_grounding ? ` and grounding ≥ ${o.min_grounding}/5` : ''}` : 'Passes when every fact is found'),
       fr('Started', relTime(r.started_at ?? r.created_at, c.now), r.finished_at ? `Finished ${relTime(r.finished_at, c.now)} · took ${fmtMs(Date.parse(r.finished_at) - Date.parse(r.started_at ?? r.created_at))}` : RUN_STATUS_SUB[r.status] ?? ''),
       ...(r.label ? [fr('Label', r.label)] : []),
@@ -255,6 +329,7 @@ export function runScreen(c: EvalCtx, runId: string, vsId?: string | null): Scre
       keepKv: true,
       acts: [
         ...(x.job_id ? [act('Open trace', () => c.go.trace(x.job_id!))] : []),
+        ...(x.wf_run_id && r.workflow_id ? [act('Open workflow run', () => c.go.wfRun(r.workflow_id!, x.wf_run_id!))] : []),
         ...(c.canEdit && x.case_id && x.answer && x.status === 'scored' && !x.passed ? [act('Use as expected answer', () => c.a.useAnswer(r, x))] : []),
       ],
     })),
@@ -262,7 +337,7 @@ export function runScreen(c: EvalCtx, runId: string, vsId?: string | null): Scre
   if (vs) sections.push(...compareSections(c, vs, r));
   return {
     head: {
-      title: `${r.set_name} · ${r.agent_name ?? 'agent'}`,
+      title: `${r.set_name} · ${targetLabel(r)}`,
       status: runPill(r),
       sub: r.label || undefined,
       acts: [
@@ -270,7 +345,10 @@ export function runScreen(c: EvalCtx, runId: string, vsId?: string | null): Scre
         ...(!active ? [act('Compare with…', () => c.a.compareWith(r))] : []),
         ...(!active && c.canEdit ? [act('Delete', () => c.a.removeRun(r))] : []),
       ],
-      add: c.canRun && !active ? act('Run again', () => c.a.run({ setId: r.set_id, agentId: r.agent_id }), 'primary') : undefined,
+      add:
+        c.canRun && !active
+          ? act('Run again', () => c.a.run(wf ? { setId: r.set_id, workflowId: r.workflow_id ?? undefined, version: r.version ?? undefined } : { setId: r.set_id, agentId: r.agent_id ?? undefined }), 'primary')
+          : undefined,
     },
     sections,
   };
@@ -314,6 +392,7 @@ export function agentEvalSections(c: EvalCtx, kapId: string): Section[] {
   const sets = c.st?.sets ?? [];
   const last = runs.find((r) => r.status === 'succeeded');
   const sections: Section[] = [{ callout: INTRO }];
+  if (last?.regressed) sections.push({ callout: `The latest evaluation regressed: ${last.regress_reason ?? 'the pass rate fell'}.` });
   if (last?.summary)
     sections.push({
       form: true,
@@ -332,5 +411,43 @@ export function agentEvalSections(c: EvalCtx, kapId: string): Section[] {
       sacts: [...(c.canRun && sets.length ? [act('Run evaluation', () => c.a.run({ agentId: kapId }), 'primary')] : []), act('Test sets', c.go.sets)],
     }),
   );
+  sections[sections.length - 1].note = trendNote(runs);
+  sections.push(schedulesSection(c, (c.st?.schedules ?? []).filter((s) => s.agent_id === kapId), { agentId: kapId }));
+  return sections;
+}
+
+// ================================================================ workflow tab
+/** The Evaluation tab of a workflow: the publish gate of its draft, its runs and automatic runs. */
+export function workflowEvalSections(c: EvalCtx, wfId: string, draft: { v: string; cfg: unknown } | null): Section[] {
+  const blocked = stateSections(c);
+  if (blocked) return blocked;
+  const runs = (c.st?.runs ?? []).filter((r) => r.workflow_id === wfId);
+  const sets = c.st?.sets ?? [];
+  const sections: Section[] = [{ callout: 'Run a test set against a version of this workflow: every question runs through the whole workflow, and each answer is checked and judged like an agent’s. A draft can be published once an evaluation of exactly that draft reaches the pass rate below.' }];
+  if (draft) {
+    const g = wfGate(runs, wfId, draft.v, draft.cfg);
+    sections.push({
+      form: true,
+      title: `Publish gate · draft ${draft.v}`,
+      sacts: c.canRun && sets.length ? [act(`Evaluate ${draft.v}`, () => c.a.run({ workflowId: wfId, version: draft.v }), 'primary')] : [],
+      rows: [
+        row(
+          'gate',
+          [cell('Status'), cell('', { p: g.ok ? ['approved', g.text] : ['hold', g.text], sub: `Needs a finished evaluation of this exact draft with a pass rate of at least ${pct(WF_GATE_MIN)}` })],
+          g.run ? [act('Open run', () => c.go.run(g.run!.id))] : [],
+        ),
+      ],
+    });
+  }
+  const last = runs.find((r) => r.status === 'succeeded');
+  if (last?.regressed) sections.push({ callout: `The latest evaluation regressed: ${last.regress_reason ?? 'the pass rate fell'}.` });
+  sections.push({
+    ...runsSection(c, runs, 'Evaluation runs', {
+      empty: sets.length ? 'Not evaluated yet.' : 'No test sets yet. Create one under Evaluation datasets.',
+      sacts: [...(c.canRun && sets.length ? [act('Run evaluation', () => c.a.run({ workflowId: wfId }))] : []), act('Test sets', c.go.sets)],
+    }),
+    note: trendNote(runs),
+  });
+  sections.push(schedulesSection(c, (c.st?.schedules ?? []).filter((s) => s.workflow_id === wfId), { workflowId: wfId }));
   return sections;
 }

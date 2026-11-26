@@ -24,6 +24,8 @@ import { uiKey, uiStore, type Wd } from './state';
 import { useLiveLoad, type Live } from '@/v35/live';
 import { useAgentsLive } from '@/features/v35/agents/live';
 import { loadWorkflows, startLiveTest, startWfSync, wfLiveStore } from './wfLive';
+import { listEvalRuns } from '@/api/platformEval';
+import { WF_GATE_MIN, wfGate } from '@/features/v35/evals/evalView';
 
 const EMPTY = EMPTY_TENANT;
 
@@ -169,10 +171,24 @@ export function useWorkflows(): WfHub {
         }
       }
       if (liveTid) {
-        // live: no evaluation gate for workflows yet; the platform runs whatever version is published
-        const pv0 = pubOf(w);
-        const dif0 = pv0 ? diffOf(cfgOf(w, pv0.v), dv.cfg) : [];
-        d.confirm('Publish ' + w.n + ' ' + dv.v + '?', 'Calls to the workflow will run ' + dv.v + ' from now on. ' + (pv0 ? pv0.v + ' becomes superseded and stays available for rollback. ' : '') + 'Test it in the designer first: evaluations of workflows are not available yet.' + (dif0.length ? ' Changes:' : ''), dif0.slice(0, 8), 'Publish', () => activate(w, dv.v, 'Published version'));
+        // live: the gate is a finished platform evaluation of exactly this draft with a pass rate of at least 80%
+        void listEvalRuns(liveTid, { workflow_id: w.id, limit: 100 })
+          .then((p) => p.items)
+          .catch(() => null)
+          .then((runs) => {
+            if (!runs) {
+              d.info('Publish ' + w.n + ' ' + dv.v, 'Could not read the evaluations of this workflow from the platform API. Try again in a moment.');
+              return;
+            }
+            const g = wfGate(runs, w.id, dv.v, dv.cfg);
+            if (!g.ok) {
+              d.confirm('Evaluate ' + dv.v + ' before publishing', g.text + '. A draft is published once an evaluation of exactly this draft reaches a pass rate of at least ' + Math.round(WF_GATE_MIN * 100) + '%.', [], 'Open Evaluation', () => go.wf(w.id, 'eval'));
+              return;
+            }
+            const pv0 = pubOf(w);
+            const dif0 = pv0 ? diffOf(cfgOf(w, pv0.v), dv.cfg) : [];
+            d.confirm('Publish ' + w.n + ' ' + dv.v + '?', g.text + '. Calls to the workflow will run ' + dv.v + ' from now on. ' + (pv0 ? pv0.v + ' becomes superseded and stays available for rollback.' : '') + (dif0.length ? ' Changes:' : ''), dif0.slice(0, 8), 'Publish', () => activate(w, dv.v, 'Published version', w.n + ' ' + dv.v + ' · evaluation ' + (g.run?.id.slice(0, 8) ?? '')));
+          });
         return;
       }
       const r = lastRun(D0, wfKey(w.id), dv.v);

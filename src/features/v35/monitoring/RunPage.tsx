@@ -12,6 +12,7 @@ import { JsonViewer } from '@/components/common/JsonViewer';
 import { Button } from '@/components/ui/button';
 import { Page } from '@/components/common/layout';
 import { RUN_TABS, runEvidence, runOverview, runRepro, runSpans } from './build';
+import { useAddToTestSet } from '@/features/v35/evals/addToSet';
 
 /** Run detail (route /monitoring/runs/:jobId/:tab?): Overview · Path and Trace · Evidence · Reproductions. */
 export default function RunPage() {
@@ -20,6 +21,7 @@ export default function RunPage() {
   const scope = useScope();
   const nav = useNavigate();
   const live = scope.kind === 'project' && !!scope.project.live;
+  const addCase = useAddToTestSet(live && scope.kind === 'project' ? scope.project.tenantId : null);
   const { data: t, isLoading } = useTrace(jobId);
   const [sel, setSel] = React.useState<string | null>(null);
   const current = RUN_TABS.find((x) => x.value === tab)?.value ?? 'overview';
@@ -90,7 +92,10 @@ export default function RunPage() {
           tabs: RUN_TABS,
           tab: current,
           setTab: (v) => nav(`${base}/monitoring/runs/${jobId}${v === 'overview' ? '' : `/${v}`}`),
-          acts: [act('Back to jobs', () => nav(`${base}/monitoring`))],
+          acts: [
+            ...(live && t.prompt ? [act('Add to test set', () => void addCase({ question: t.prompt, answer: t.answer ? t.answer.map((p) => (typeof p === 'string' ? p : p.v)).join('') : null, source: 'monitoring' }))] : []),
+            act('Back to jobs', () => nav(`${base}/monitoring`)),
+          ],
         },
         sections,
       }}

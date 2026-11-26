@@ -10,6 +10,7 @@ import type { WfTenantKey } from './types';
 import { useWorkflows } from './useWorkflows';
 import { isActiveWfRun, loadWfRun, wfLiveStore } from './wfLive';
 import { wfRunScreen } from './wfRunBuild';
+import { useAddToTestSet } from '@/features/v35/evals/addToSet';
 
 /** One workflow run (route /workflows/:workflowId/runs/:runId): live tenant, platform API. */
 export default function WorkflowRunPage() {
@@ -25,6 +26,7 @@ export default function WorkflowRunPage() {
   const w = c.D.workflows.find((x) => x.id === workflowId);
   useCrumbs([w?.n ?? workflowId, 'Run ' + runId.slice(0, 8)]);
   const tid = one.tenantId;
+  const addCase = useAddToTestSet(tid);
   const decide = (s: WfRunStep, approve: boolean) =>
     d.form(
       (approve ? 'Approve · ' : 'Reject · ') + s.label,
@@ -66,6 +68,7 @@ export default function WorkflowRunPage() {
       a: {
         approve: (s) => decide(s, true),
         reject: (s) => decide(s, false),
+        addCase: run ? () => void addCase({ question: run.input, answer: run.answer, source: 'workflow' }) : undefined,
         cancel: () =>
           d.confirm('Cancel run', 'Stop this run? Steps not finished are skipped; KAP jobs already running finish on their own.', [], 'Cancel run', async () => {
             if (!tid) return;

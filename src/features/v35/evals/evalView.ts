@@ -3,7 +3,7 @@
  * test questions and the comparison of two runs. Pure: no React, no fetches.
  */
 import type { DsStatus } from '@/engine/types';
-import type { EvalCaseIn, EvalResult, EvalRun, EvalRunStatus, EvalSummary } from '@/api/platformEval';
+import type { EvalCaseIn, EvalResult, EvalRun, EvalRunStatus, EvalSchedule, EvalSummary, EvalTrigger } from '@/api/platformEval';
 import { relTime } from '@/features/v35/agents/fromKap';
 
 // ------------------------------------------------------------------ labels
@@ -51,6 +51,7 @@ export function runPill(r: Pick<EvalRun, 'status' | 'summary'>): [DsStatus, stri
   if (isActiveRun(r)) return ['submitted', r.status === 'queued' ? 'Queued' : 'Running'];
   if (r.status === 'failed') return ['rejected', 'Run failed'];
   if (r.status === 'cancelled') return ['draft', 'Cancelled'];
+  if ((r as Partial<EvalRun>).regressed) return ['rejected', 'Regressed'];
   const s = r.summary;
   if (!s || !s.total) return ['draft', 'No questions'];
   if (s.passed === s.total) return ['approved', 'All passed'];
@@ -121,7 +122,18 @@ export function caseProblem(x: EvalCaseIn): string {
   return '';
 }
 
-export const termsText =(terms: string[] | null | undefined) => (terms ?? []).join('\n');
+/** Numbers written in a text ("2.62%", "7,984"), each once, in order: suggested facts for a new test question. */
+export function numbersOf(text: string): string[] {
+  const out: string[] = [];
+  for (const m of text.matchAll(/(?<![\w.])-?\d{1,3}(?:,\d{3})+(?:\.\d+)?%?|(?<![\w.])-?\d+(?:\.\d+)?%?/g)) {
+    const n = m[0].replace(/%$/, '');
+    if (/^(19|20)\d{2}$/.test(n)) continue; // years belong with their period, e.g. "April 2026"
+    if (!out.includes(n)) out.push(n);
+  }
+  return out;
+}
+
+export const termsText = (terms: string[] | null | undefined) => (terms ?? []).join('\n');
 
 // ------------------------------------------------------------------ CSV import
 export const CSV_COLUMNS = ['question', 'expected', 'must_include', 'must_not_include', 'tags'] as const;
@@ -262,4 +274,63 @@ export function previousRun(runs: EvalRun[], r: EvalRun): EvalRun | undefined {
   return runs
     .filter((x) => x.id !== r.id && x.set_id === r.set_id && x.agent_id === r.agent_id && x.status === 'succeeded' && Date.parse(x.created_at) < Date.parse(r.created_at))
     .sort((p, q) => Date.parse(q.created_at) - Date.parse(p.created_at))[0];
+}
+
+// ------------------------------------------------------------------ targets, triggers, schedules
+export const TRIGGER_L: Record<EvalTrigger, string> = { manual: 'Started by hand', schedule: 'On schedule', data: 'After new data' };
+
+/** "askai_indicators_agent", or "Indicator answer · v2" for a workflow version. */
+export function targetLabel(r: Pick<EvalRun, 'target_kind' | 'agent_name' | 'agent_id' | 'workflow_id' | 'version'>): string {
+  if (r.target_kind === 'workflow') return `${r.agent_name ?? r.workflow_id ?? 'workflow'}${r.version ? ` · ${r.version}` : ''}`;
+  return r.agent_name ?? (r.agent_id ?? '').slice(0, 8);
+}
+
+export const EVERY_OPTS: [string, number | null][] = [['Not on a schedule', null], ['Every 6 hours', 360], ['Every day', 1440], ['Every week', 10080]];
+export const everyL = (m: number | null | undefined) => EVERY_OPTS.find(([, v]) => v === (m ?? null))?.[0] ?? `Every ${Math.round((m ?? 0) / 60)} hours`;
+
+/** "Every day · after new data · below 80% is a regression". */
+export function scheduleText(s: Pick<EvalSchedule, 'every_minutes' | 'on_data' | 'min_pass_rate' | 'enabled'>): string {
+  const parts = [s.every_minutes ? everyL(s.every_minutes) : '', s.on_data ? 'after new data' : ''].filter(Boolean);
+  const when = parts.join(' and ');
+  const out = [when.charAt(0).toUpperCase() + when.slice(1)];
+  if (s.min_pass_rate != null) out.push(`below ${pct(s.min_pass_rate)} is a regression`);
+  if (!s.enabled) out.push('paused');
+  return out.join(' · ');
+}
+
+/** Pass rates of the finished runs, oldest first (for a trend line). */
+export function passTrend(runs: EvalRun[]): number[] {
+  return runs
+    .filter((r) => r.status === 'succeeded' && r.summary?.pass_rate != null)
+    .sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at))
+    .map((r) => r.summary!.pass_rate!);
+}
+
+/** JSON with sorted keys: the platform stores documents as jsonb, which reorders keys. */
+export function stableJson(v: unknown): string {
+  if (Array.isArray(v)) return '[' + v.map(stableJson).join(',') + ']';
+  if (v && typeof v === 'object') return '{' + Object.keys(v as object).sort().map((k) => JSON.stringify(k) + ':' + stableJson((v as Record<string, unknown>)[k])).join(',') + '}';
+  return JSON.stringify(v ?? null);
+}
+
+/** A draft can be published when a finished evaluation of exactly this configuration reached the minimum pass rate. */
+export const WF_GATE_MIN = 0.8;
+export interface WfGate {
+  ok: boolean;
+  text: string;
+  run?: EvalRun;
+}
+export function wfGate(runs: EvalRun[], workflowId: string, version: string, cfg: unknown, min = WF_GATE_MIN): WfGate {
+  const mine = runs
+    .filter((r) => r.target_kind === 'workflow' && r.workflow_id === workflowId && r.version === version)
+    .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
+  if (!mine.length) return { ok: false, text: `Not evaluated: run a test set against ${version}` };
+  const same = mine.filter((r) => stableJson(r.agent?.cfg) === stableJson(cfg));
+  const r = same.find((x) => x.status === 'succeeded');
+  if (!same.length) return { ok: false, text: `Changed after the last evaluation of ${version}: evaluate it again`, run: mine[0] };
+  if (isActiveRun(same[0])) return { ok: false, text: 'Evaluation running', run: same[0] };
+  if (!r) return { ok: false, text: `The last evaluation of ${version} did not finish`, run: same[0] };
+  const rate = r.summary?.pass_rate ?? 0;
+  if (rate < min) return { ok: false, text: `Pass rate ${pct(rate)} is below ${pct(min)}`, run: r };
+  return { ok: true, text: `Passed: ${pct(rate)} of ${r.set_name}`, run: r };
 }

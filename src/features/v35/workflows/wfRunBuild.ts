@@ -20,7 +20,7 @@ export interface WfRunCtx {
   /** may decide human steps and cancel runs */
   canExec: boolean;
   go: { workflow: () => void; trace: (jobId: string) => void; replay: () => void };
-  a: { approve: (s: WfRunStep) => void; reject: (s: WfRunStep) => void; cancel: () => void };
+  a: { approve: (s: WfRunStep) => void; reject: (s: WfRunStep) => void; cancel: () => void; addCase?: () => void };
 }
 
 const STEP_P: Record<WfRunStep['status'], ReturnType<typeof stP>> = {
@@ -104,7 +104,12 @@ export function wfRunScreen(c: WfRunCtx, title: string): ScreenModel {
       title,
       status: stP(runSt(r)),
       sub: `${r.workflow_name ?? r.workflow_id} · ${r.version}`,
-      acts: [act('Back to workflow', c.go.workflow), act('Replay on canvas', c.go.replay), ...(active && c.canExec ? [act('Cancel run', c.a.cancel)] : [])],
+      acts: [
+        act('Back to workflow', c.go.workflow),
+        act('Replay on canvas', c.go.replay),
+        ...(!active && c.a.addCase ? [act('Add to test set', c.a.addCase)] : []),
+        ...(active && c.canExec ? [act('Cancel run', c.a.cancel)] : []),
+      ],
     },
     sections,
   };

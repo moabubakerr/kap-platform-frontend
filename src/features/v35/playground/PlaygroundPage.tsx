@@ -9,6 +9,7 @@ import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { FlaskConical, Play, RotateCcw } from 'lucide-react';
 import { useBase, useScope } from '@/app/shell/AppShell';
+import { useAddToTestSet } from '@/features/v35/evals/addToSet';
 import { useCrumbs } from '@/app/shell/crumbs';
 import { errorMessage, fetchAgents, fetchTrace, submitJob, toTrace, type PlatformAgentSummary } from '@/api/platformLive';
 import { PageHeadView, DsPill } from '@/engine/ScreenView';
@@ -60,6 +61,7 @@ function Playground({ tenantId, tenantKey, tenantName }: { tenantId: string; ten
   const base = useBase();
   const nav = useNavigate();
   const access = useAccess(tenantKey);
+  const addCase = useAddToTestSet(tenantId);
   const agents = useQuery({ queryKey: ['pg-agents', tenantId], queryFn: () => fetchAgents(tenantId), staleTime: 60_000 });
   const [agentId, setAgentId] = React.useState('');
   const [prompt, setPrompt] = React.useState(EXAMPLES[0]);
@@ -185,7 +187,7 @@ function Playground({ tenantId, tenantKey, tenantName }: { tenantId: string; ten
         {/* ---------------- result */}
         <div className="flex min-w-0 flex-col gap-4">
           {current ? (
-            <RunView key={current} jobId={current} onOpen={(t) => nav(`${base}/monitoring/runs/${current}${t ? `/${t}` : ''}`)} />
+            <RunView key={current} jobId={current} onOpen={(t) => nav(`${base}/monitoring/runs/${current}${t ? `/${t}` : ''}`)} onAddCase={(q, a) => void addCase({ question: q, answer: a, source: 'playground' })} />
           ) : (
             <EmptyState icon={<FlaskConical size={22} />} title="No run yet" body="Choose an agent, write a prompt and press Run. The answer and the trace appear here." />
           )}
@@ -207,7 +209,7 @@ function Playground({ tenantId, tenantKey, tenantName }: { tenantId: string; ten
   );
 }
 
-function RunView({ jobId, onOpen }: { jobId: string; onOpen: (tab?: string) => void }) {
+function RunView({ jobId, onOpen, onAddCase }: { jobId: string; onOpen: (tab?: string) => void; onAddCase: (question: string, answer: string | null) => void }) {
   const started = React.useRef(Date.now());
   const [, tick] = React.useState(0);
   const [sel, setSel] = React.useState<string | null>(null);
@@ -245,6 +247,11 @@ function RunView({ jobId, onOpen }: { jobId: string; onOpen: (tab?: string) => v
           <DsPill p={statusPill(t.statusLabel)} />
           <span className="font-mono text-[12.5px] text-ink-muted">{elapsed}</span>
           <span className="ml-auto flex gap-2">
+            {done && d.job.user_prompt && (
+              <Button size="xs" variant="outline" onClick={() => onAddCase(d.job.user_prompt!, d.job.status === 'succeeded' ? (d.job.result ?? null) : null)}>
+                Add to test set
+              </Button>
+            )}
             <Button size="xs" variant="outline" onClick={() => onOpen()}>
               Open in Monitoring
             </Button>

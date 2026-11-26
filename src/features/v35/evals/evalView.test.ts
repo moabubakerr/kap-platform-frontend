@@ -10,14 +10,15 @@ const SUM = { total: 3, done: 3, passed: 2, failed: 1, errors: 0, pass_rate: 0.6
 function res(i: number, passed: boolean | null, over: Partial<EvalResult> = {}): EvalResult {
   return {
     id: `x${i}`, case_id: `c${i}`, position: i, question: `Q${i}?`, expected: '', must_include: [], must_not_include: [], status: passed == null ? 'submitted' : 'scored',
-    job_id: `j${i}`, job_status: 'succeeded', answer: `A${i}`, checks: [{ kind: 'includes', term: '2.62', ok: !!passed }], judge: { correctness: passed ? 5 : 2, grounding: 4, completeness: 5, reason: passed ? 'Correct.' : 'Wrong period.' },
+    job_id: `j${i}`, wf_run_id: null, job_status: 'succeeded', answer: `A${i}`, checks: [{ kind: 'includes', term: '2.62', ok: !!passed }], judge: { correctness: passed ? 5 : 2, grounding: 4, completeness: 5, reason: passed ? 'Correct.' : 'Wrong period.' },
     passed, reason: passed ? 'Correct.' : 'Missing: 2.62', metrics: { latency_ms: 4200, tokens: 9000, tools: ['find_indicator'] }, error: null, submitted_at: null, answered_at: null, scored_at: null, ...over,
   };
 }
 
 function run(id: string, results: EvalResult[], over: Partial<EvalRun> = {}): EvalRun {
   return {
-    id, set_id: 's1', set_name: 'Indicators QA', agent_id: 'ag1', agent_name: 'askai_indicators_agent', agent: { model_ref: 'chat_default', collections: ['askai_indicators'], allowed_tools: ['find_indicator'], updated_at: '2026-11-26T08:00:00Z' },
+    id, set_id: 's1', set_name: 'Indicators QA', target_kind: 'agent', workflow_id: null, version: null, trigger: 'manual', regressed: null, regress_reason: null,
+    agent_id: 'ag1', agent_name: 'askai_indicators_agent', agent: { model_ref: 'chat_default', collections: ['askai_indicators'], allowed_tools: ['find_indicator'], updated_at: '2026-11-26T08:00:00Z' },
     label: '', options: { judge: true, min_correctness: 4, min_grounding: 0, parallel: 2 }, status: 'succeeded', summary: SUM, error: null,
     created_at: '2026-11-26T11:00:00Z', started_at: '2026-11-26T11:00:01Z', finished_at: '2026-11-26T11:02:00Z', results, ...over,
   };
@@ -100,13 +101,15 @@ describe('screens', () => {
     missing: false,
     sets: [{ id: 's1', name: 'Indicators QA', description: 'Checked by hand', case_count: 2, last_run: b0, created_at: '', updated_at: '2026-11-26T10:00:00Z' }],
     runs: [b0, a0],
+    schedules: [{ id: 'sc1', set_id: 's1', target_kind: 'agent', agent_id: 'ag1', workflow_id: null, every_minutes: 1440, on_data: true, min_pass_rate: 0.8, options: {}, enabled: true, next_run_at: '2026-11-27T12:00:00Z', data_seen_at: null, last_run_id: 'b', created_at: '', updated_at: '' }],
+    workflows: [{ id: 'ind_answer', name: 'Indicator answer', versions: [{ v: 'v2', st: 'Draft' }, { v: 'v1', st: 'Published' }] }],
     set: { s1: { id: 's1', name: 'Indicators QA', description: '', case_count: 1, last_run: null, created_at: '', updated_at: '', cases: [{ id: 'c0', position: 0, question: 'Q0?', expected: '2.62%', must_include: ['2.62'], must_not_include: [], tags: [], created_at: '', updated_at: '' }] } },
     run: { a: a0, b: b0 },
   };
   const ctx = (over: Partial<EvalCtx> = {}): EvalCtx => ({
-    st, loading: false, error: null, now: NOW, canEdit: true, canRun: true, agents: [{ id: 'ag1', name: 'askai_indicators_agent' }],
-    a: Object.fromEntries(['newSet', 'editSet', 'deleteSet', 'addCase', 'editCase', 'deleteCase', 'importCsv', 'run', 'cancel', 'removeRun', 'compareWith', 'useAnswer'].map((k) => [k, vi.fn()])) as unknown as EvalCtx['a'],
-    go: Object.fromEntries(['sets', 'set', 'run', 'agent', 'trace'].map((k) => [k, vi.fn()])) as unknown as EvalCtx['go'],
+    st, loading: false, error: null, now: NOW, canEdit: true, canRun: true, agents: [{ id: 'ag1', name: 'askai_indicators_agent' }], workflows: st.workflows,
+    a: Object.fromEntries(['newSet', 'editSet', 'deleteSet', 'addCase', 'editCase', 'deleteCase', 'importCsv', 'run', 'cancel', 'removeRun', 'compareWith', 'useAnswer', 'addSchedule', 'editSchedule', 'deleteSchedule'].map((k) => [k, vi.fn()])) as unknown as EvalCtx['a'],
+    go: Object.fromEntries(['sets', 'set', 'run', 'agent', 'trace', 'workflow', 'wfRun'].map((k) => [k, vi.fn()])) as unknown as EvalCtx['go'],
     ...over,
   });
 
@@ -149,7 +152,8 @@ describe('screens', () => {
 
   it('shows the agent’s evaluation runs', () => {
     const s = agentEvalSections(ctx(), 'ag1');
-    expect(s.map((x) => x.title)).toEqual([undefined, 'Latest result', 'Evaluation runs']);
+    expect(s.map((x) => x.title)).toEqual([undefined, 'Latest result', 'Evaluation runs', 'Automatic runs']);
+    expect(s[3].rows!.length).toBe(1);
     expect(s[2].rows!.length).toBe(2);
     expect(agentEvalSections(ctx(), 'other')[1].rows).toEqual([]);
   });
