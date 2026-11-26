@@ -11,6 +11,7 @@ import type { ExportRun, ExportStatus, ExportStepState, PgDataset, PgDatasetCrea
 import { kapOfRun, rel, span } from './fromKap';
 import { hhmmss, type RunStep, type StepState } from './runView';
 import { mappingKey, mappingValues, toMapping } from './pgMapping';
+import { isRecordsRun, KAP_LOAD_NOTE, recordCountsText, recordsKey, recordsValues, toRecords } from './pgRecords';
 
 // ------------------------------------------------------------------ state
 /** The platform's PostgreSQL records of a live tenant. `missing`: the platform API has no such routes yet. */
@@ -60,11 +61,13 @@ export const SSL_HINT: Record<string, string> = {
 export const PRESET_SCAI = 'SCEAI indicators (built-in)';
 export const PRESET_MAPPED = 'Map columns (no SQL)';
 export const PRESET_CUSTOM = 'Custom SQL';
-export const PRESET_OPTS = [PRESET_SCAI, PRESET_MAPPED, PRESET_CUSTOM];
-export const presetLabel = (p: PgPreset | string) => (p === 'scai_indicators' ? PRESET_SCAI : p === 'mapped' ? PRESET_MAPPED : PRESET_CUSTOM);
-export const presetOf = (label: string): PgPreset => (label === PRESET_CUSTOM ? 'custom' : label === PRESET_MAPPED ? 'mapped' : 'scai_indicators');
+export const PRESET_RECORDS = 'Records → searchable documents';
+export const PRESET_OPTS = [PRESET_SCAI, PRESET_MAPPED, PRESET_CUSTOM, PRESET_RECORDS];
+export const presetLabel = (p: PgPreset | string) => (p === 'scai_indicators' ? PRESET_SCAI : p === 'mapped' ? PRESET_MAPPED : p === 'records' ? PRESET_RECORDS : PRESET_CUSTOM);
+export const presetOf = (label: string): PgPreset => (label === PRESET_CUSTOM ? 'custom' : label === PRESET_MAPPED ? 'mapped' : label === PRESET_RECORDS ? 'records' : 'scai_indicators');
 /** Short name of a preset for lists and the audit trail. */
-export const presetName = (p: PgPreset | string) => (p === 'scai_indicators' ? 'SCEAI indicators' : p === 'mapped' ? 'Column mapping' : 'Custom SQL');
+export const presetName = (p: PgPreset | string) => (p === 'scai_indicators' ? 'SCEAI indicators' : p === 'mapped' ? 'Column mapping' : p === 'records' ? 'Records as documents' : 'Custom SQL');
+export const RECORDS_HINT = 'Each row becomes a document agents can search — for tickets, contracts, products…';
 export const SCAI_HINT = 'Built-in mapping for the Ask AI database (scai_indicators: indicators, indicator_details, indicator_values, indicator_analysis).';
 export const MAPPED_HINT = 'Recommended for other databases: choose a table and say which column is the series, the period and the value. The platform writes the SQL.';
 
@@ -176,6 +179,15 @@ const STEP_WHAT: Record<string, string> = {
   kap_scan: 'KAP’s connector finds the new files and starts a pipeline run.',
   kap_load: 'KAP’s pipeline loads the indicators into the collection.',
 };
+/** Records datasets: the same five steps, about documents. */
+const STEP_TITLE_REC: Record<string, string> = { ...STEP_TITLE, write: 'Write the record documents' };
+const STEP_WHAT_REC: Record<string, string> = {
+  read: 'The platform reads the table with a read-only user.',
+  write: 'One Word document per record (title, fields and sections), each in its own folder.',
+  upload: 'New and changed documents go to the bucket that the dataset’s KAP connector scans; removed records are deleted.',
+  kap_scan: 'KAP’s connector finds the new, changed and removed documents and starts a pipeline run.',
+  kap_load: KAP_LOAD_NOTE,
+};
 const STEP_STATE: Record<ExportStepState, StepState> = { pending: 'pending', running: 'current', done: 'done', failed: 'failed', skipped: 'skipped' };
 
 /** KAP's progress as a percentage: a number (0–100) or `{percent}` / `{completed, total}`. */
@@ -200,8 +212,10 @@ export function kapResultText(r: unknown): string {
   return String(r);
 }
 
-/** The run's steps in order (read → write → upload → kap_scan → kap_load), for the step view. */
-export function exportSteps(r: Pick<ExportRun, 'steps' | 'status' | 'kap'>, now: number): RunStep[] {
+/** The run's steps in order (read → write → upload → kap_scan → kap_load), for the step view. `records`: a records dataset (documents). */
+export function exportSteps(r: Pick<ExportRun, 'steps' | 'status' | 'kap'>, now: number, records = false): RunStep[] {
+  const TITLE = records ? STEP_TITLE_REC : STEP_TITLE;
+  const WHAT = records ? STEP_WHAT_REC : STEP_WHAT;
   const by = new Map(r.steps.map((s) => [s.key, s]));
   const keys = [...STEP_ORDER, ...r.steps.map((s) => s.key).filter((k) => !STEP_ORDER.includes(k))];
   return keys.map((k) => {
@@ -210,19 +224,20 @@ export function exportSteps(r: Pick<ExportRun, 'steps' | 'status' | 'kap'>, now:
     const t0 = s?.started_at ? Date.parse(s.started_at) : NaN;
     const t1 = s?.finished_at ? Date.parse(s.finished_at) : NaN;
     const time = !Number.isNaN(t0) && !Number.isNaN(t1) ? span(t1 - t0) : !Number.isNaN(t0) && state === 'current' ? `${hhmmss(s!.started_at)} · ${span(now - t0)} so far` : '';
-    let detail = s?.detail || STEP_WHAT[k] || '';
+    let detail = s?.detail || WHAT[k] || '';
     if (k === 'kap_load' && state === 'current') {
+      if (records && s?.detail && !/summar/i.test(s.detail)) detail = `${detail} · ${KAP_LOAD_NOTE}`;
       const p = kapPercent(r.kap?.progress);
       if (p != null) detail = `${detail} · ${p}%`;
     }
     if (state === 'skipped' && !s?.detail) detail = 'Skipped.';
-    return { key: k, title: s?.title || STEP_TITLE[k] || k, state, time, detail };
+    return { key: k, title: s?.title || TITLE[k] || k, state, time, detail };
   });
 }
 
 /** Overall progress of an export run: the share of finished steps (KAP's load progress counts within its step). */
-export function exportProgress(r: Pick<ExportRun, 'steps' | 'status' | 'kap'>, now: number): { percent: number; label: string; indeterminate: boolean } {
-  const steps = exportSteps(r, now);
+export function exportProgress(r: Pick<ExportRun, 'steps' | 'status' | 'kap'>, now: number, records = false): { percent: number; label: string; indeterminate: boolean } {
+  const steps = exportSteps(r, now, records);
   const n = steps.length || 1;
   if (!isActiveExport(r)) return { percent: r.status === 'succeeded' ? 100 : Math.round((steps.filter((s) => s.state === 'done' || s.state === 'skipped').length / n) * 100), label: EXPORT_STATUS_LABEL[r.status] ?? r.status, indeterminate: false };
   const done = steps.filter((s) => s.state === 'done' || s.state === 'skipped').length;
@@ -236,6 +251,7 @@ export function exportProgress(r: Pick<ExportRun, 'steps' | 'status' | 'kap'>, n
 /** Counts per file in words: "120 indicators · 4,512 observations · 98 narratives". */
 export function countsText(c: ExportRun['counts']): string {
   if (!c) return '—';
+  if (c.documents != null) return recordCountsText(c);
   const parts: string[] = [];
   if (c.registry != null) parts.push(`${fmtCount(c.registry)} ${c.registry === 1 ? 'indicator' : 'indicators'}`);
   if (c.observations != null) parts.push(`${fmtCount(c.observations)} ${c.observations === 1 ? 'observation' : 'observations'}`);
@@ -261,7 +277,7 @@ export function toPgRun(x: ExportRun, now: number, source: string, collection: s
   const active = isActiveExport(x);
   const t0 = x.started_at ? Date.parse(x.started_at) : NaN;
   const dur = x.finished_at && !Number.isNaN(t0) ? span(Date.parse(x.finished_at) - t0) : active && !Number.isNaN(t0) ? `${span(now - t0)} (running)` : active ? 'not started' : '—';
-  const pr = exportProgress(x, now);
+  const pr = exportProgress(x, now, isRecordsRun(x));
   const logs: [string, string, string][] = [[hhmmss(x.created_at), 'INFO', `Export registered · ${triggerLabel(x.trigger)}`]];
   for (const s of x.steps) {
     if (s.started_at) logs.push([hhmmss(s.started_at), 'INFO', `${s.title || STEP_TITLE[s.key] || s.key} started`]);
@@ -429,7 +445,8 @@ const YES = 'Yes';
 
 export function datasetValues(d: PgDataset | null): FormValues {
   return {
-    ...mappingValues(d?.preset === 'mapped' ? d.mapping : null),
+    // records share the mapping's table and filter keys: the stored setting of the preset wins
+    ...(d?.preset === 'records' ? recordsValues(d.records) : { ...recordsValues(null), ...mappingValues(d?.preset === 'mapped' ? d.mapping : null) }),
     name: d?.name ?? '',
     preset: presetLabel(d?.preset ?? 'scai_indicators'),
     published: d ? (d.published_only ? YES : 'No') : YES,
@@ -479,7 +496,7 @@ export function toPgDatasetCreate(v: FormValues, sourceId: string): PgDatasetCre
     source_id: sourceId,
     name: String(v.name).trim(),
     preset,
-    ...(preset === 'custom' ? { queries: queriesOf(v) } : preset === 'mapped' ? { mapping: toMapping(v) } : { published_only: v.published !== 'No' }),
+    ...(preset === 'custom' ? { queries: queriesOf(v) } : preset === 'mapped' ? { mapping: toMapping(v) } : preset === 'records' ? { records: toRecords(v) } : { published_only: v.published !== 'No' }),
     collection_name: String(v.collection).trim(),
     schedule_minutes: scheduleMinutes(v.schedule),
   };
@@ -499,6 +516,9 @@ export function toPgDatasetPatch(d: PgDataset, v: FormValues): PgDatasetPatch | 
   } else if (preset === 'mapped') {
     const m = toMapping(v);
     if (d.preset !== 'mapped' || mappingKey(m) !== mappingKey(d.mapping)) p.mapping = m;
+  } else if (preset === 'records') {
+    const r = toRecords(v);
+    if (d.preset !== 'records' || recordsKey(r) !== recordsKey(d.records)) p.records = r;
   } else if ((v.published !== 'No') !== d.published_only) p.published_only = v.published !== 'No';
   const min = scheduleMinutes(v.schedule, d.schedule_minutes);
   if ((min ?? null) !== (d.schedule_minutes ?? null)) p.schedule_minutes = min;
@@ -513,8 +533,9 @@ export function lastRunText(d: PgDataset, now: number): string {
 
 /** The files of a dataset preview in order, with at most `max` rows each. */
 export function previewFiles(p: PgDatasetPreview, max = 5) {
-  return PG_FILES.filter((f) => p.files[f]).map((f) => {
-    const x = p.files[f]!;
+  const files = p.files ?? {};
+  return PG_FILES.filter((f) => files[f]).map((f) => {
+    const x = files[f]!;
     return { file: f, name: FILE_NAME[f], columns: x.columns, rows: x.rows.slice(0, max), count: x.count, more: Math.max(0, x.count - Math.min(max, x.rows.length)) };
   });
 }

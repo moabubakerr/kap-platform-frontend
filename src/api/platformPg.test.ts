@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
-  createPgDataset, createPgSource, deletePgSource, getPgColumns, listPgExports, listPgSources, patchPgDataset, patchPgSource, PG_FEATURE_MISSING, PgApiError, pgUrl, previewPgDataset, previewPgMapping, runPgDataset, testPgSource, type PgMapping,
+  createPgDataset, createPgSource, deletePgSource, getPgColumns, listPgExports, listPgSources, patchPgDataset, patchPgSource, PG_FEATURE_MISSING, PgApiError, pgUrl, previewPgDataset, previewPgMapping, previewPgRecords, runPgDataset, testPgSource, type PgMapping, type PgRecords,
 } from './platformPg';
 
 const T = '71b6c98a-7f7a-4a8b-ab31-132c85bdc88b';
@@ -122,6 +122,37 @@ describe('platformPg client', () => {
     expect(JSON.parse(c2[1].body)).toMatchObject({ preset: 'mapped', mapping: { table: 'public.monthly_sales', frequency: { value: 'M' } } });
     expect(c3[1].method).toBe('PATCH');
     expect(JSON.parse(c3[1].body).mapping.value).toBe('net_revenue');
+  });
+
+  it('previews records as documents and saves a records dataset', async () => {
+    const records: PgRecords = {
+      table: 'public.tickets',
+      id_column: 'ticket_id',
+      title: 'Ticket {ticket_id}',
+      fields: [{ column: 'status', label: 'Status' }],
+      sections: [{ column: 'description', label: 'Description' }],
+      filters: [{ column: 'is_public', op: 'is_true' }],
+      order_by: { column: 'updated_at', desc: true },
+      max_records: 5000,
+      language: 'en',
+    };
+    const preview = { documents: { count: 812, sample: [{ key: 'ticket-1', title: 'Ticket 1', text: 'Ticket 1\nStatus: open' }] }, problems: [], query: 'SELECT …' };
+    const f = mockFetch(json(preview), json(preview), json({ id: 'd2', preset: 'records', records }, 201), json({ id: 'd2' }), json(preview));
+    const p = await previewPgRecords(T, 's1', records, { name: 'Support tickets', limit: 5 });
+    expect(p.documents.count).toBe(812);
+    expect(p.documents.sample[0].title).toBe('Ticket 1');
+    await previewPgRecords(T, 's1', records);
+    expect((await createPgDataset(T, { source_id: 's1', name: 'Support tickets', preset: 'records', records, collection_name: 'support_tickets', schedule_minutes: null })).records?.table).toBe('public.tickets');
+    await patchPgDataset(T, 'd2', { records: { ...records, max_records: 100 } });
+    expect((await previewPgDataset(T, 'd2')).documents?.count).toBe(812);
+    const [c0, c1, c2, c3] = f.mock.calls;
+    expect(c0[0]).toBe(`/api/platform/t/${T}/pg-sources/s1/records-preview`);
+    expect(c0[1].method).toBe('POST');
+    expect(JSON.parse(c0[1].body)).toEqual({ records, name: 'Support tickets', limit: 5 });
+    expect(JSON.parse(c1[1].body)).toEqual({ records });
+    expect(JSON.parse(c2[1].body)).toMatchObject({ preset: 'records', records: { id_column: 'ticket_id' } });
+    expect(c3[1].method).toBe('PATCH');
+    expect(JSON.parse(c3[1].body).records.max_records).toBe(100);
   });
 
   it('reports an unreachable platform', async () => {

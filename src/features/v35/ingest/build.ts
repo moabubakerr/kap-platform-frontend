@@ -25,6 +25,8 @@ export interface IngestNav {
   document: (id: string) => void;
   collection: (id: string) => void;
   security: () => void;
+  /** Agents (Agent Factory); `collection`: a hint for a new agent that searches it */
+  agents?: (collection?: string) => void;
 }
 
 export interface IngestActs {

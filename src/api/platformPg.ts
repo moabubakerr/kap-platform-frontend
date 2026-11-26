@@ -58,7 +58,7 @@ export interface PgSqlPreview {
   truncated: boolean;
 }
 
-export type PgPreset = 'scai_indicators' | 'mapped' | 'custom';
+export type PgPreset = 'scai_indicators' | 'mapped' | 'custom' | 'records';
 export type PgFile = 'registry' | 'observations' | 'narratives';
 export interface PgQueries {
   registry: string;
@@ -114,6 +114,49 @@ export interface PgMapping {
   filters?: PgMappingFilter[] | null;
 }
 
+/** A column of the table with the label it gets in the document. */
+export interface PgRecordPart {
+  column: string;
+  label: string;
+}
+
+/**
+ * Preset `records`: each row of one table becomes a small Word document (a "record
+ * card": title, short "Label: value" fields, long text sections) in its own folder,
+ * loaded into a KAP document collection that agents search with `hybrid_search`.
+ */
+export interface PgRecords {
+  /** `schema.name` */
+  table: string;
+  /** unique per row: the document's key */
+  id_column: string;
+  /** template with `{column}` placeholders, e.g. "Ticket {ticket_id}" */
+  title: string;
+  /** short "Label: value" lines */
+  fields: PgRecordPart[];
+  /** long text, each under its label as a heading */
+  sections: PgRecordPart[];
+  filters?: PgMappingFilter[] | null;
+  order_by?: { column: string; desc: boolean } | null;
+  /** default 5000, at most 50000 */
+  max_records: number;
+  language?: 'en' | 'ar' | null;
+}
+
+/** One sample document: `text` is the plain-text rendering of the card. */
+export interface PgRecordDoc {
+  key: string;
+  title: string;
+  text: string;
+}
+/** `POST pg-sources/{id}/records-preview` and the dataset preview of a records dataset. */
+export interface PgRecordsPreview {
+  documents: { count: number; sample: PgRecordDoc[] };
+  problems: string[];
+  /** the SQL the platform generated */
+  query: string;
+}
+
 export interface PgDataset {
   id: string;
   source_id: string;
@@ -123,6 +166,8 @@ export interface PgDataset {
   queries: PgQueries | null;
   /** preset `mapped` only (null otherwise; older platforms leave it out) */
   mapping?: PgMapping | null;
+  /** preset `records` only (null otherwise) */
+  records?: PgRecords | null;
   published_only: boolean;
   collection_name: string;
   schedule_minutes: number | null;
@@ -139,6 +184,7 @@ export interface PgDatasetCreate {
   preset: PgPreset;
   queries?: PgQueries;
   mapping?: PgMapping;
+  records?: PgRecords;
   published_only?: boolean;
   collection_name: string;
   schedule_minutes?: number | null;
@@ -151,13 +197,19 @@ export interface PgFilePreview {
   count: number;
 }
 export interface PgDatasetPreview {
-  files: Partial<Record<PgFile, PgFilePreview>>;
+  /** indicator datasets; a records dataset has `documents` instead */
+  files?: Partial<Record<PgFile, PgFilePreview>>;
   problems: string[];
   /** the SQL the platform generated (mapped datasets) */
   queries?: PgQueries;
+  /** records datasets */
+  documents?: PgRecordsPreview['documents'];
+  /** records datasets: the SQL the platform generated */
+  query?: string;
 }
 /** `POST pg-sources/{id}/mapping-preview`: a mapping tried before it is saved. */
 export interface PgMappingPreview extends PgDatasetPreview {
+  files: Partial<Record<PgFile, PgFilePreview>>;
   queries: PgQueries;
 }
 
@@ -174,6 +226,17 @@ export interface ExportStep {
   finished_at: string | null;
 }
 
+export interface ExportCounts {
+  registry?: number | null;
+  observations?: number | null;
+  narratives?: number | null;
+  documents?: number | null;
+  new?: number | null;
+  changed?: number | null;
+  removed?: number | null;
+  unchanged?: number | null;
+}
+
 export interface ExportRun {
   id: string;
   dataset_id: string;
@@ -184,7 +247,8 @@ export interface ExportRun {
   started_at: string | null;
   finished_at: string | null;
   steps: ExportStep[];
-  counts: { registry: number | null; observations: number | null; narratives: number | null } | null;
+  /** indicator datasets: rows per file; records datasets: documents and what changed */
+  counts: ExportCounts | null;
   files: { name: string; key: string; bytes: number | null }[];
   kap: { collection: string | null; pipeline_job_id: string | null; state: string | null; progress: unknown; result: unknown } | null;
   error: string | null;
@@ -289,6 +353,13 @@ export const getPgColumns = (tid: string, id: string, table: string) => pgCall<P
 /** The three files and the generated SQL of a column mapping, before it is saved. */
 export const previewPgMapping = (tid: string, id: string, mapping: PgMapping, limit?: number) =>
   pgCall<PgMappingPreview>(tid, 'POST', `pg-sources/${id}/mapping-preview`, limit != null ? { mapping, limit } : { mapping });
+/** Sample documents (≤ 5), their count, problems and the generated SQL of a records setting, before it is saved. */
+export const previewPgRecords = (tid: string, id: string, records: PgRecords, opts: { name?: string; limit?: number } = {}) =>
+  pgCall<PgRecordsPreview>(tid, 'POST', `pg-sources/${id}/records-preview`, {
+    records,
+    ...(opts.name ? { name: opts.name } : {}),
+    ...(opts.limit != null ? { limit: opts.limit } : {}),
+  });
 
 // ------------------------------------------------------------------ datasets
 export const listPgDatasets = (tid: string, q: { source_id?: string; limit?: number; offset?: number } = {}) => pgCall<PgPage<PgDataset>>(tid, 'GET', 'pg-datasets', undefined, { limit: 200, ...q });

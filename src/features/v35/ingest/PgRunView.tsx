@@ -16,7 +16,8 @@ import { hhmmss } from './runView';
 import { Field, LinkBtn, ProgressBar, StatusBadge, Stepper } from './LiveRunView';
 import { loadPgExport, PG_RUN_MS } from './pgLive';
 import { EXPORT_STATUS_LABEL, exportOf, exportProgress, exportStatus, exportSteps, fmtBytes, fmtCount, isActiveExport, kapPercent, kapResultText, runFileRows, runLabel, triggerLabel } from './pgView';
-import { PgBanner } from './PgSourceView';
+import { AgentCtaCard, PgBanner } from './PgSourceView';
+import { agentCta, isRecordsRun, KAP_LOAD_NOTE, recordCountRows } from './pgRecords';
 import { datasetTab } from './pgActions';
 import type { useIngest } from './useIngest';
 
@@ -25,8 +26,11 @@ type Ctx = ReturnType<typeof useIngest>;
 function Overview({ c, x, ds, now }: { c: Ctx; x: ExportRun; ds: PgDataset | undefined; now: number }) {
   const st = exportStatus(x.status);
   const active = isActiveExport(x);
-  const steps = exportSteps(x, now);
-  const pr = exportProgress(x, now);
+  const records = isRecordsRun(x, ds);
+  const steps = exportSteps(x, now, records);
+  const pr = exportProgress(x, now, records);
+  const kapLoading = active && steps.some((s) => (s.key === 'kap_load' || s.key === 'kap_scan') && s.state === 'current');
+  const cta = records && x.status === 'succeeded' ? agentCta(ds, [x]) : null;
   const files = runFileRows(x);
   const t0 = x.started_at ? Date.parse(x.started_at) : NaN;
   const dur = Number.isNaN(t0) ? (active ? 'not started' : '—') : `${span((x.finished_at ? Date.parse(x.finished_at) : now) - t0)}${active ? ' so far' : ''}`;
@@ -83,6 +87,34 @@ function Overview({ c, x, ds, now }: { c: Ctx; x: ExportRun; ds: PgDataset | und
         <div className="mt-3 text-[12px] text-ink-muted">The platform reports the first three steps; KAP’s scan and load are read from KAP’s run.</div>
       </div>
 
+      {records && kapLoading && (
+        <div className="rounded-card border border-line-subtle bg-info-bg px-4 py-3 text-[13px] text-info">{KAP_LOAD_NOTE} With many new or changed records this takes a while.</div>
+      )}
+
+      {cta && <AgentCtaCard c={c} cta={cta} />}
+
+      {records ? (
+        <div className="card px-4 py-3.5">
+          <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
+            <span className="text-[15px] font-semibold text-ink-strong">Documents</span>
+            {x.files.length > 0 && (
+              <span className="text-[12px] text-ink-muted">
+                {fmtCount(x.files.length)} {x.files.length === 1 ? 'file' : 'files'} uploaded · {fmtBytes(x.files.reduce((a, f) => a + (f.bytes ?? 0), 0))}
+              </span>
+            )}
+          </div>
+          <div className="grid gap-x-6 gap-y-3" style={{ gridTemplateColumns: 'repeat(auto-fit,minmax(130px,1fr))' }}>
+            {recordCountRows(x.counts).map((r) => (
+              <div key={r.key} title={r.hint}>
+                <div className="text-[12px] text-ink-muted">{r.label}</div>
+                <div className="text-[20px] font-semibold text-ink-strong">{fmtCount(r.value)}</div>
+                <div className="text-[11.5px] text-ink-subtle">{r.hint}</div>
+              </div>
+            ))}
+          </div>
+          {!x.counts && <div className="mt-2 text-[12.5px] text-ink-muted">{active ? 'Counted once the platform has read the table.' : 'No counts were reported.'}</div>}
+        </div>
+      ) : (
       <div className="card overflow-auto">
         <div className="px-4 pb-2 pt-3.5 text-[15px] font-semibold text-ink-strong">Files</div>
         <table className="w-full min-w-[560px] border-collapse text-[13px]">
@@ -110,6 +142,7 @@ function Overview({ c, x, ds, now }: { c: Ctx; x: ExportRun; ds: PgDataset | und
         </table>
         {!files.length && <div className="p-6 text-center text-ink-muted">{active ? 'No files written yet.' : 'No files were written.'}</div>}
       </div>
+      )}
 
       <div className="card px-4 py-3.5">
         <div className="mb-2 text-[15px] font-semibold text-ink-strong">KAP</div>

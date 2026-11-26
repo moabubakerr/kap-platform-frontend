@@ -3,13 +3,15 @@
  * and last test, the tables from the last test, the datasets exported to KAP,
  * and one dataset opened (route tab `dataset-<id>`) with its preview and runs.
  */
-import { AlertTriangle, Loader2 } from 'lucide-react';
+import * as React from 'react';
+import { AlertTriangle, Bot, Loader2 } from 'lucide-react';
 import { act, cell, fr } from '@/engine/build';
 import { ScreenView } from '@/engine/ScreenView';
 import type { Row, ScreenModel, Section } from '@/engine/types';
 import { Button } from '@/components/ui/button';
-import { PG_FEATURE_MISSING, type PgDataset, type PgMapping, type PgQueries, type PgSource } from '@/api/platformPg';
+import { PG_FEATURE_MISSING, type PgDataset, type PgMapping, type PgQueries, type PgRecordDoc, type PgRecords, type PgSource } from '@/api/platformPg';
 import { exampleId, mappingRows, mappingSummary } from './pgMapping';
+import { agentCta, COST_NOTE, parseCard, recordsRows, recordsSummary } from './pgRecords';
 import type { Source } from '@/v35/data/ingest';
 import { rel } from './fromKap';
 import { srcP } from './logic';
@@ -184,6 +186,164 @@ function MappingPanel({ m, queries }: { m: PgMapping; queries: PgQueries | null 
   );
 }
 
+// ------------------------------------------------------------------ records → documents
+/** A records dataset: the setting in words and as rows, and the SQL the platform generated (from its last preview). */
+function RecordsPanel({ r, query }: { r: PgRecords; query: string | null | undefined }) {
+  return (
+    <div className="card flex flex-col gap-3 px-4 py-3.5">
+      <p className="text-[13.5px] leading-[1.5] text-ink-body">{recordsSummary(r)}</p>
+      <div className="rounded-sm border border-line-subtle">
+        {recordsRows(r).map(([k, v]) => (
+          <div key={k} className="grid gap-3 border-t border-line-subtle px-3 py-1.5 text-[13px] first:border-t-0" style={{ gridTemplateColumns: '170px minmax(0,1fr)' }}>
+            <span className="text-ink-muted">{k}</span>
+            <span className={k === 'Table' || k === 'ID column' ? 'font-mono text-[12.5px] [overflow-wrap:anywhere]' : '[overflow-wrap:anywhere]'}>{v}</span>
+          </div>
+        ))}
+      </div>
+      {query ? (
+        <div className="flex flex-col gap-2">
+          <div className="text-[12px] text-ink-muted">The SQL the platform runs for these records (read-only; change the setting with Edit).</div>
+          <SqlBlock label="Generated SQL" sql={query} />
+        </div>
+      ) : (
+        <div className="text-[12px] text-ink-muted">Preview the dataset to see the SQL the platform generates.</div>
+      )}
+    </div>
+  );
+}
+
+/** One sample record card laid out like a document: title, the field list, then each section under its heading. */
+function DocCard({ doc, r }: { doc: PgRecordDoc; r: PgRecords | null | undefined }) {
+  const card = parseCard(doc, r);
+  const parsed = card.fields.length > 0 || card.sections.length > 0;
+  return (
+    <article className="card flex flex-col gap-3 px-5 py-4">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <h3 className="text-[15px] font-semibold text-ink-strong [overflow-wrap:anywhere]">{doc.title || '(no title)'}</h3>
+        <span className="font-mono text-[11.5px] text-ink-subtle" title="Document key">
+          {doc.key}
+        </span>
+      </div>
+      {parsed ? (
+        <>
+          {card.fields.length > 0 && (
+            <dl className="grid gap-x-4 gap-y-1 text-[13px]" style={{ gridTemplateColumns: 'minmax(110px,max-content) minmax(0,1fr)' }}>
+              {card.fields.map(([k, v], i) => (
+                <React.Fragment key={i}>
+                  <dt className="text-ink-muted">{k}</dt>
+                  <dd className="text-ink-body [overflow-wrap:anywhere]">{v || <span className="text-ink-subtle">—</span>}</dd>
+                </React.Fragment>
+              ))}
+            </dl>
+          )}
+          {card.sections.map((s, i) => (
+            <section key={i} className="flex flex-col gap-1">
+              <h4 className="text-[13px] font-semibold text-ink-strong">{s.label}</h4>
+              <p className="max-h-[220px] overflow-auto whitespace-pre-wrap text-[13px] leading-[1.55] text-ink-body">{s.body || <span className="text-ink-subtle">Empty</span>}</p>
+            </section>
+          ))}
+          {card.rest && <p className="whitespace-pre-wrap text-[12.5px] text-ink-muted">{card.rest}</p>}
+        </>
+      ) : (
+        <p className="max-h-[320px] overflow-auto whitespace-pre-wrap text-[13px] leading-[1.55] text-ink-body">{doc.text}</p>
+      )}
+    </article>
+  );
+}
+
+function RecordsPreviewPanel({ ds, st, canRun, onPreview, onRun }: { ds: PgDataset; st: PreviewState | undefined; canRun: boolean; onPreview: () => void; onRun: () => void }) {
+  if (!st)
+    return (
+      <div className="card flex flex-wrap items-center gap-3 px-4 py-3.5 text-[13px] text-ink-muted">
+        <span className="flex-1">Preview reads the table and shows up to five sample documents as KAP will get them, before anything is exported.</span>
+        <Button size="sm" variant="outline" onClick={onPreview}>
+          Preview
+        </Button>
+      </div>
+    );
+  if (st.loading)
+    return (
+      <div className="card flex items-center gap-2 px-4 py-5 text-[13px] text-ink-muted">
+        <Loader2 size={16} className="animate-spin" /> Reading {ds.records?.table ?? ds.name} and writing sample documents…
+      </div>
+    );
+  if (st.error)
+    return (
+      <div className="card flex flex-col gap-3 px-4 py-3.5">
+        <div className="rounded-sm bg-danger-bg px-3 py-2.5 text-[13px] text-danger-fg">The preview failed: {st.error}</div>
+        <div>
+          <Button size="sm" variant="outline" onClick={onPreview}>
+            Preview again
+          </Button>
+        </div>
+      </div>
+    );
+  const docs = st.data?.documents;
+  const sample = (docs?.sample ?? []).slice(0, 5);
+  const problems = st.data?.problems ?? [];
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="card flex flex-wrap items-baseline gap-x-4 gap-y-1 px-4 py-3 text-[13px]">
+        <span className="font-semibold text-ink-strong">
+          {fmtCount(docs?.count ?? 0)} {docs?.count === 1 ? 'document' : 'documents'}
+        </span>
+        <span className="text-ink-muted">{sample.length ? `The first ${sample.length} shown below.` : 'No sample documents.'}</span>
+      </div>
+      {problems.length > 0 && (
+        <div className="flex items-start gap-3 rounded-card border border-line-subtle bg-warning-bg px-4 py-3 text-warning-fg">
+          <AlertTriangle size={18} className="mt-0.5 flex-none" />
+          <div className="flex flex-col gap-1 text-[13px]">
+            <div className="font-semibold">
+              {problems.length} {problems.length === 1 ? 'problem' : 'problems'} found
+            </div>
+            <ul className="list-disc pl-4">
+              {problems.map((p, i) => (
+                <li key={i}>{p}</li>
+              ))}
+            </ul>
+          </div>
+        </div>
+      )}
+      <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fit,minmax(320px,1fr))' }}>
+        {sample.map((d) => (
+          <DocCard key={d.key} doc={d} r={ds.records} />
+        ))}
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        {canRun && (
+          <Button size="sm" onClick={onRun}>
+            Run now
+          </Button>
+        )}
+        <Button size="sm" variant="outline" onClick={onPreview}>
+          Preview again
+        </Button>
+        <span className="text-[12px] text-ink-muted">
+          Previewed {rel(new Date(st.at).toISOString(), Date.now())}. {COST_NOTE}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+/** After a successful run of a records dataset: create an agent that searches its collection. */
+export function AgentCtaCard({ c, cta }: { c: Ctx; cta: NonNullable<ReturnType<typeof agentCta>> }) {
+  return (
+    <div className="card flex flex-wrap items-center gap-3 border-l-[3px] border-l-brand px-4 py-3.5">
+      <Bot size={20} className="flex-none text-brand" strokeWidth={1.75} />
+      <div className="min-w-[220px] flex-1">
+        <div className="text-[13.5px] font-semibold text-ink-strong">{cta.text}</div>
+        <div className="text-[12.5px] text-ink-muted">{cta.how}</div>
+      </div>
+      {c.go.agents && (
+        <Button size="sm" onClick={() => c.go.agents!(cta.collection)}>
+          Open Agents
+        </Button>
+      )}
+    </div>
+  );
+}
+
 // ------------------------------------------------------------------ page
 function connectionSection(c: Ctx, s: PgSource, st: Source['st']): Section {
   const A = c.pg.a;
@@ -231,7 +391,7 @@ function datasetsSection(c: Ctx, s: PgSource, datasets: PgDataset[], selId: stri
   return {
     title: 'Datasets',
     badge: String(datasets.length),
-    note: 'Each dataset exports three indicator files (registry, observations, narratives) into its own KAP collection.',
+    note: 'Each dataset exports into its own KAP collection: three indicator files (registry, observations, narratives), or one searchable document per record.',
     sacts: c.canData ? [act('New dataset', () => A.addDataset(s.id), 'primary')] : [],
     cols: ['Dataset', 'Mapping', 'Target collection', 'Schedule', 'Last run'],
     mode: 'inline',
@@ -241,8 +401,8 @@ function datasetsSection(c: Ctx, s: PgSource, datasets: PgDataset[], selId: stri
         key: `ds:${x.id}`,
         cells: [
           cell(x.name, { m: true, sub: x.id === selId ? 'Open below' : undefined }),
-          cell(presetName(x.preset), { sub: x.preset === 'scai_indicators' ? (x.published_only ? 'Published indicators only' : 'All indicators') : x.preset === 'mapped' ? (x.mapping ? `Table ${x.mapping.table}` : 'One table') : 'Three SQL queries' }),
-          cell(x.collection_name, { sub: x.kap?.provisioned_at ? 'Created in KAP' : 'Created at the first run' }),
+          cell(presetName(x.preset), { sub: x.preset === 'scai_indicators' ? (x.published_only ? 'Published indicators only' : 'All indicators') : x.preset === 'mapped' ? (x.mapping ? `Table ${x.mapping.table}` : 'One table') : x.preset === 'records' ? (x.records ? `Table ${x.records.table}` : 'One table') : 'Three SQL queries' }),
+          cell(x.collection_name, { sub: `${x.preset === 'records' ? 'Documents · ' : ''}${x.kap?.provisioned_at ? 'Created in KAP' : 'Created at the first run'}` }),
           cell(scheduleLabel(x.schedule_minutes), { sub: x.schedule_minutes ? nextRunText(x.next_run_at, now) : undefined }),
           x.last_run ? cell('', { p: [exportStatus(x.last_run.status) === 'Succeeded' ? 'approved' : exportStatus(x.last_run.status) === 'Failed' ? 'rejected' : 'submitted', lastRunText(x, now)] }) : cell('Never run'),
         ],
@@ -262,7 +422,10 @@ function datasetSections(c: Ctx, s: PgSource, x: PgDataset, preview: PreviewStat
   const now = Date.now();
   const runs = (c.pg.state?.exports ?? []).filter((r) => r.dataset_id === x.id);
   const k = x.kap;
+  const records = x.preset === 'records';
+  const cta = agentCta(x, runs);
   return [
+    ...(cta ? [{ custom: <AgentCtaCard c={c} cta={cta} /> } as Section] : []),
     {
       group: `Dataset · ${x.name}`,
       form: true,
@@ -275,14 +438,31 @@ function datasetSections(c: Ctx, s: PgSource, x: PgDataset, preview: PreviewStat
         fr(
           'Mapping',
           presetName(x.preset),
-          x.preset === 'scai_indicators' ? 'Built-in mapping for the Ask AI database' : x.preset === 'mapped' ? 'Columns of one table; the platform writes the SQL (see Column mapping below)' : 'Custom SQL: registry, observations and narratives queries',
+          x.preset === 'scai_indicators'
+            ? 'Built-in mapping for the Ask AI database'
+            : x.preset === 'mapped'
+              ? 'Columns of one table; the platform writes the SQL (see Column mapping below)'
+              : records
+                ? 'Each row of one table becomes a document agents can search (see Records below)'
+                : 'Custom SQL: registry, observations and narratives queries',
         ),
         ...(x.preset === 'scai_indicators'
           ? [fr('Only published indicators', x.published_only ? 'Yes' : 'No')]
           : x.preset === 'mapped'
             ? [fr('Table', x.mapping?.table ?? '—', x.mapping ? `KAP ids look like ${exampleId(x.mapping)}` : 'The platform did not return the mapping')]
-            : [fr('Queries', ['registry', 'observations', ...(x.queries?.narratives ? ['narratives'] : [])].join(', '), 'Shown in Edit')]),
-        fr('Target collection', x.collection_name, k?.provisioned_at ? 'KAP indicator collection; agents read it with indicator tools such as find_indicator' : 'Created in KAP at the first run', k?.collection_id ? [act('Open', () => c.go.collection(x.collection_name))] : []),
+            : records
+              ? [fr('Table', x.records?.table ?? '—', x.records ? `Documents titled ${x.records.title}` : 'The platform did not return the records setting')]
+              : [fr('Queries', ['registry', 'observations', ...(x.queries?.narratives ? ['narratives'] : [])].join(', '), 'Shown in Edit')]),
+        fr(
+          'Target collection',
+          x.collection_name,
+          k?.provisioned_at
+            ? records
+              ? 'KAP document collection; agents search it with hybrid_search (Business Data → collection)'
+              : 'KAP indicator collection; agents read it with indicator tools such as find_indicator'
+            : `Created in KAP at the first run${records ? ' as a document collection agents can search' : ''}`,
+          k?.collection_id ? [act('Open', () => c.go.collection(x.collection_name))] : [],
+        ),
         fr('KAP connector and pipeline', `${k?.connector ?? `${x.collection_name}_pg`} · ${k?.pipeline ?? `${x.collection_name}_pipeline`}`, k?.provisioned_at ? `Created ${rel(k.provisioned_at, now)}` : 'Not created yet', [
           ...(k?.connector && k.provisioned_at ? [act('Open connector', () => c.go.source(k.connector))] : []),
           ...(k?.pipeline && k.provisioned_at ? [act('Open pipeline', () => c.go.pipe(k.pipeline))] : []),
@@ -292,14 +472,20 @@ function datasetSections(c: Ctx, s: PgSource, x: PgDataset, preview: PreviewStat
       ],
     },
     ...(x.preset === 'mapped' && x.mapping ? [{ title: 'Column mapping', custom: <MappingPanel m={x.mapping} queries={preview?.data?.queries ?? x.queries} /> } as Section] : []),
-    {
-      title: 'Preview',
-      custom: <PreviewPanel ds={x} st={preview} canRun={c.canRun} onPreview={() => A.previewDataset(x.id)} onRun={() => A.runDataset(x.id)} />,
-    },
+    ...(records && x.records ? [{ title: 'Records', custom: <RecordsPanel r={x.records} query={preview?.data?.query} /> } as Section] : []),
+    records
+      ? {
+          title: 'Sample documents',
+          custom: <RecordsPreviewPanel ds={x} st={preview} canRun={c.canRun} onPreview={() => A.previewDataset(x.id)} onRun={() => A.runDataset(x.id)} />,
+        }
+      : {
+          title: 'Preview',
+          custom: <PreviewPanel ds={x} st={preview} canRun={c.canRun} onPreview={() => A.previewDataset(x.id)} onRun={() => A.runDataset(x.id)} />,
+        },
     {
       title: 'Export runs',
       badge: String(runs.length),
-      cols: ['Run', 'Status', 'Trigger', 'Started', 'Rows exported'],
+      cols: ['Run', 'Status', 'Trigger', 'Started', records ? 'Documents' : 'Rows exported'],
       mode: 'inline',
       empty: 'No export runs yet.',
       rows: runs.map(

@@ -7,11 +7,12 @@ import type { useDialogs } from '@/engine/dialogs';
 import { liveSave, type Live } from '@/v35/live';
 import type { IngestTenantKey } from '@/v35/data/ingest';
 import {
-  createPgDataset, createPgSource, deletePgDataset, deletePgSource, getPgColumns, patchPgDataset, patchPgSource, previewPgDataset, previewPgMapping, runPgDataset, testPgSource, type PgDataset, type PgSource,
+  createPgDataset, createPgSource, deletePgDataset, deletePgSource, getPgColumns, patchPgDataset, patchPgSource, previewPgDataset, previewPgMapping, previewPgRecords, runPgDataset, testPgSource, type PgDataset, type PgSource,
 } from '@/api/platformPg';
 import type { IngestNav } from './build';
 import { pgPreviewStore, pgTestStore, putExport } from './pgLive';
 import { CONNECTION_KEYS, pgDatasetWizard, pgSourceWizard, type PgMappingDeps } from './pgWizards';
+import { COST_NOTE } from './pgRecords';
 import { pgRunId, presetName, testSummary, toPgDatasetCreate, toPgDatasetPatch, toPgSourceCreate, toPgSourcePatch, type PgState } from './pgView';
 
 /** Rows the wizard's mapping preview asks for per file. */
@@ -89,6 +90,7 @@ export function makePgActs({ d, live, tid, t, P, sourceNames, kapCollections, au
     test: () => runTest(sourceId),
     columns: (table) => getPgColumns(tid, sourceId, table),
     preview: (m) => previewPgMapping(tid, sourceId, m, MAPPING_PREVIEW_ROWS),
+    recordsPreview: (r, name) => previewPgRecords(tid, sourceId, r, { name, limit: MAPPING_PREVIEW_ROWS }),
   });
 
   const previewDataset = (id: string) => {
@@ -211,8 +213,8 @@ export function makePgActs({ d, live, tid, t, P, sourceNames, kapCollections, au
               box.ds = await createPgDataset(tid, body);
             });
             if (e) return e;
-            audit('Created dataset', `${body.name} · ${s.name} → collection ${body.collection_name} · ${presetName(body.preset)}${body.mapping ? ` · table ${body.mapping.table}` : ''}`);
-            d.toast(`Created ${body.name}. Previewing the files…`);
+            audit('Created dataset', `${body.name} · ${s.name} → collection ${body.collection_name} · ${presetName(body.preset)}${body.mapping ? ` · table ${body.mapping.table}` : ''}${body.records ? ` · table ${body.records.table}` : ''}`);
+            d.toast(`Created ${body.name}. ${body.records ? 'Previewing sample documents…' : 'Previewing the files…'}`);
             const id = box.ds?.id;
             if (id)
               window.setTimeout(() => {
@@ -243,7 +245,7 @@ export function makePgActs({ d, live, tid, t, P, sourceNames, kapCollections, au
             if (e) return e;
             audit('Edited dataset', `${x.name} · ${Object.keys(patch).join(', ')}`);
             d.toast(`Saved ${String(v.name).trim()}.`);
-            if ('queries' in patch || 'mapping' in patch || 'preset' in patch || 'published_only' in patch)
+            if ('queries' in patch || 'mapping' in patch || 'records' in patch || 'preset' in patch || 'published_only' in patch)
               window.setTimeout(() => {
                 go.source(s.name, datasetTab(x.id));
                 previewDataset(x.id);
@@ -284,7 +286,9 @@ export function makePgActs({ d, live, tid, t, P, sourceNames, kapCollections, au
       }
       d.confirm(
         `Run ${x.name} now?`,
-        `The platform reads ${x.source_name}, writes the three indicator files, uploads them and has KAP load them into ${x.collection_name}.${first ? ` This first run also creates the KAP connector ${x.collection_name}_pg, pipeline ${x.collection_name}_pipeline and collection ${x.collection_name}.` : ''}`,
+        x.preset === 'records'
+          ? `The platform reads ${x.records?.table ?? x.source_name}, writes one document per record (only new and changed ones are uploaded) and has KAP load them into ${x.collection_name}. ${COST_NOTE}${first ? ` This first run also creates the KAP connector ${x.collection_name}_pg, the document pipeline ${x.collection_name}_pipeline and the document collection ${x.collection_name}.` : ''}`
+          : `The platform reads ${x.source_name}, writes the three indicator files, uploads them and has KAP load them into ${x.collection_name}.${first ? ` This first run also creates the KAP connector ${x.collection_name}_pg, pipeline ${x.collection_name}_pipeline and collection ${x.collection_name}.` : ''}`,
         [],
         'Run now',
         () => run(x),

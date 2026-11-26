@@ -111,6 +111,7 @@ export function useIngest(): IngestCtx & { tenant: IngestTenantKey | null; liveS
       document: (id) => nav(`${base}/unstructured/${encodeURIComponent(id)}`),
       collection: (id) => nav(`${base}/collections/${encodeURIComponent(id)}`),
       security: () => nav(`${base}/security`),
+      agents: (collection) => nav(`${base}/agents${collection ? `?create=1&collection=${encodeURIComponent(collection)}` : ''}`),
     };
 
     /** Queue a run and let the simulated worker pick it up and finish it (prototype `simulate`). */

@@ -4,11 +4,14 @@
  * Bodies and checks are in `pgView.ts`; `finish` sends them.
  */
 import type { FormField, FormValues, WizardSpec } from '@/engine/dialogs';
-import { PgApiError, type PgColumn, type PgColumns, type PgDataset, type PgMapping, type PgMappingPreview, type PgSource, type PgTable } from '@/api/platformPg';
+import { PgApiError, type PgColumn, type PgColumns, type PgDataset, type PgMapping, type PgMappingPreview, type PgRecords, type PgRecordsPreview, type PgSource, type PgTable } from '@/api/platformPg';
 import {
-  cellText, checkQueries, datasetValues, FILE_NAME, fmtCount, MAPPED_HINT, PG_FILES, pgSourceValues, PRESET_CUSTOM, PRESET_MAPPED, PRESET_OPTS, PRESET_SCAI, previewFiles, REQUIRED_COLUMNS, SCAI_HINT, scheduleOpts, SSL_HINT, SSL_MODES, toPgDatasetPatch, toPgSourcePatch,
-  validateDataset, validatePgSource, type DatasetCheckCtx,
+  cellText, checkQueries, datasetValues, FILE_NAME, fmtCount, MAPPED_HINT, PG_FILES, pgSourceValues, PRESET_CUSTOM, PRESET_MAPPED, PRESET_OPTS, PRESET_RECORDS, PRESET_SCAI, previewFiles, RECORDS_HINT, REQUIRED_COLUMNS, SCAI_HINT, scheduleOpts, SSL_HINT, SSL_MODES,
+  toPgDatasetPatch, toPgSourcePatch, validateDataset, validatePgSource, type DatasetCheckCtx,
 } from './pgView';
+import {
+  cardExcerpt, COST_NOTE, DEFAULT_MAX, exampleTitle, fieldKey, humanise, idOptions, isLongColumn, LANG_OPTS, labelDefaults, ORDER_OPTS, recordDefaults, recordsKey, recordsSummary, recordWarnings, sectionKey, sectionOptions, toRecords, validateRecordStep, type RecStep,
+} from './pgRecords';
 import {
   colNames, colOf, columnDefaults, exampleId, FILTER_ROWS, FREQ_COLUMN, FREQ_LABEL, FREQ_OPTS, FREQS, KIND_AUTO, kindOf, loadedColumns, mappingKey, mappingSummary, mappingWarnings, MAX_FILTERS, MODE_COLUMN, MODE_FIXED, MODES, namesFirst, NO_FILTER, NONE, OP_OPTS, opNeedsValue, opOf,
   PERIOD_KINDS, periodKind, prefixOf, toMapping, typeHint, validateMapStep, type MapStep,
@@ -100,6 +103,8 @@ export interface PgMappingDeps {
   test: () => Promise<string>;
   columns: (table: string) => Promise<PgColumns>;
   preview: (m: PgMapping) => Promise<PgMappingPreview>;
+  /** records → documents preview (sample cards); without it the preview step says it is not available */
+  recordsPreview?: (r: PgRecords, name?: string) => Promise<PgRecordsPreview>;
 }
 
 export interface PgDatasetWizardArgs {
@@ -123,9 +128,26 @@ const MAP_STEPS: [string, MapStep | 'preview'][] = [
   ['Filters', 'filters'],
   ['Preview', 'preview'],
 ];
-/** The wizard's steps for a Mapping choice: the column mapping adds six steps after Data. */
-export const datasetSteps = (preset: string | undefined) => (preset === PRESET_MAPPED ? [...BASE_STEPS, ...MAP_STEPS.map(([l]) => l), ...TAIL_STEPS] : [...BASE_STEPS, ...TAIL_STEPS]);
-const mapStepOf = (label: string) => MAP_STEPS.find(([l]) => l === label)?.[1];
+const REC_STEPS: [string, RecStep][] = [
+  ['Table', 'table'],
+  ['Record', 'record'],
+  ['Content', 'content'],
+  ['Filters & size', 'filters'],
+];
+const REC_PREVIEW = 'Preview';
+/**
+ * The wizard's steps for a Mapping choice: the column mapping adds six steps after Data;
+ * records add four after Data and a preview after the schedule.
+ */
+export const datasetSteps = (preset: string | undefined) =>
+  preset === PRESET_MAPPED
+    ? [...BASE_STEPS, ...MAP_STEPS.map(([l]) => l), ...TAIL_STEPS]
+    : preset === PRESET_RECORDS
+      ? [...BASE_STEPS, ...REC_STEPS.map(([l]) => l), 'Target collection', 'Schedule', REC_PREVIEW, 'Review']
+      : [...BASE_STEPS, ...TAIL_STEPS];
+const mapStepOf = (label: string, preset?: string) => (preset === PRESET_MAPPED ? MAP_STEPS.find(([l]) => l === label)?.[1] : undefined);
+const recStepOf = (label: string, preset?: string): RecStep | 'preview' | undefined =>
+  preset === PRESET_RECORDS ? (label === REC_PREVIEW ? 'preview' : REC_STEPS.find(([l]) => l === label)?.[1]) : undefined;
 
 const warnNote = (w: string[], label = 'Check'): FormField[] => (w.length ? [{ type: 'note', tone: 'warn', label, text: w.join(' ') }] : []);
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -140,12 +162,18 @@ interface PreviewEntry {
   /** the platform has no mapping preview yet: saving is still allowed */
   missing?: boolean;
 }
+interface RecPreviewEntry {
+  data?: PgRecordsPreview;
+  error?: string;
+  missing?: boolean;
+}
 
 export function pgDatasetWizard({ ds, source, check, finish, mapping: deps }: PgDatasetWizardArgs): WizardSpec {
   const edit = !!ds;
   const initial = datasetValues(ds);
   // a stored mapping keeps its choices: no column guesses for its own table
   if (ds?.preset === 'mapped' && ds.mapping) initial._defaultsFor = ds.mapping.table;
+  if (ds?.preset === 'records' && ds.records) initial._rdefaultsFor = ds.records.table;
 
   // ---- session state of the column mapping (loaded columns, previews); a change re-renders through a `_…At` value
   const colCache = new Map<string, ColEntry>();
@@ -193,6 +221,25 @@ export function pgDatasetWizard({ ds, source, check, finish, mapping: deps }: Pg
     });
   };
 
+  const rvCache = new Map<string, RecPreviewEntry>();
+  const loadRecPreview = (r: PgRecords, name: string, set: (k: string, val: any) => void, force = false) => {
+    const key = recordsKey(r);
+    if (busy.has(`r:${key}`) || (rvCache.has(key) && !force)) return;
+    if (!deps?.recordsPreview) {
+      rvCache.set(key, { error: 'the records preview is not available here.' });
+      return later(() => set('_pvAt', Date.now()));
+    }
+    busy.add(`r:${key}`);
+    rvCache.delete(key);
+    deps.recordsPreview(r, name || undefined).then(
+      (data) => rvCache.set(key, { data }),
+      (e) => rvCache.set(key, e instanceof PgApiError && e.routeMissing ? { missing: true, error: e.message } : { error: errMsg(e) }),
+    ).finally(() => {
+      busy.delete(`r:${key}`);
+      set('_pvAt', Date.now());
+    });
+  };
+
   const tableFields = (v: FormValues, set: (k: string, val: any) => void): FormField[] => {
     const known = deps?.tables() ?? null;
     const names = (known ?? []).map((t) => `${t.schema}.${t.name}`);
@@ -220,7 +267,13 @@ export function pgDatasetWizard({ ds, source, check, finish, mapping: deps }: Pg
     const cols = e?.columns ?? [];
     const rows = (known ?? []).find((t) => `${t.schema}.${t.name}` === table)?.rows_estimate;
     return [
-      { k: 'm_table', label: 'Table', type: 'select', opts, hint: `Each row of the table must be one value of one series in one period. ${rows != null && rows >= 0 ? `About ${rows.toLocaleString('en-US')} rows.` : ''}`.trim() },
+      {
+        k: 'm_table',
+        label: 'Table',
+        type: 'select',
+        opts,
+        hint: `${v.preset === PRESET_RECORDS ? 'A table or view; each row becomes one document.' : 'Each row of the table must be one value of one series in one period.'} ${rows != null && rows >= 0 ? `About ${rows.toLocaleString('en-US')} rows.` : ''}`.trim(),
+      },
       !e
         ? ({ type: 'note', tone: 'info', text: `Loading the columns of ${table}…` } as FormField)
         : e.error
@@ -336,7 +389,7 @@ export function pgDatasetWizard({ ds, source, check, finish, mapping: deps }: Pg
 
   /** '' or the problem of a mapping step (`v` with `_cols`); may correct values (defaults after the columns load). */
   const validateMap = (label: string, v: FormValues, set: (k: string, val: any) => void): string => {
-    const st = mapStepOf(label);
+    const st = mapStepOf(label, v.preset);
     if (!st) return '';
     const vv = withCols(v);
     const cols = loadedColumns(vv);
@@ -357,10 +410,98 @@ export function pgDatasetWizard({ ds, source, check, finish, mapping: deps }: Pg
     return '';
   };
 
+  // ---- records → searchable documents
+  const recordFields = (v: FormValues, cols: PgColumn[]): FormField[] => {
+    const names = colNames(cols);
+    const ex = exampleTitle(v.r_title, cols);
+    return [
+      { k: 'r_id', label: 'ID column', type: 'select', opts: idOptions(cols), hint: `${typeHint(cols, v.r_id)}${v.r_id ? '. ' : ''}Different in every row: it names the record’s document and tells new, changed and removed records apart.` },
+      {
+        k: 'r_title',
+        label: 'Title',
+        type: 'text',
+        ph: 'e.g. Ticket {ticket_id}',
+        hint: `${ex ? `Example: ${ex}. ` : ''}Put column names in braces; each document’s title is filled from its row.`,
+      },
+      { k: 'r_order', label: 'Order by (optional)', type: 'select', opts: [NONE, ...namesFirst(cols, ['date', 'number'])], hint: 'Which records come first when there are more than the maximum.' },
+      ...(v.r_order && v.r_order !== NONE ? ([{ k: 'r_order_dir', label: 'Order', type: 'select', opts: ORDER_OPTS }] as FormField[]) : []),
+      ...(names.length ? [] : ([{ type: 'note', tone: 'warn', text: 'The columns are not loaded: go back to Table.' }] as FormField[])),
+      ...warnNote(recordWarnings('record', v, cols)),
+    ];
+  };
+
+  const contentFields = (v: FormValues, cols: PgColumn[]): FormField[] => {
+    // a chip just added gets a humanised label (the engine's chips have no per-chip editor)
+    Object.assign(v, labelDefaults(v));
+    const shortFirst = [...cols.filter((c) => !isLongColumn(c)), ...cols.filter(isLongColumn)].map((c) => c.name).filter((n) => n !== v.r_id);
+    const labelField = (c: string, key: string, what: string): FormField => ({ k: key, label: `${what} label · ${c}`, type: 'text', ph: humanise(c), hint: typeHint(cols, c) });
+    return [
+      { k: 'r_fields', label: 'Fields', type: 'chips', opts: shortFirst, hint: 'Short values shown as “Label: value” lines under the title (status, customer, dates…).' },
+      ...((v.r_fields ?? []) as string[]).map((c) => labelField(c, fieldKey(c), 'Field')),
+      { k: 'r_sections', label: 'Sections', type: 'chips', opts: sectionOptions(cols).filter((n) => n !== v.r_id), hint: 'Long text, each under its label as a heading (description, notes, resolution…). Text columns are listed first.' },
+      ...((v.r_sections ?? []) as string[]).map((c) => labelField(c, sectionKey(c), 'Section')),
+      ...warnNote(recordWarnings('content', v, cols)),
+    ];
+  };
+
+  const recFilterFields = (v: FormValues, cols: PgColumn[]): FormField[] => [
+    ...filterFields(v, cols),
+    { k: 'r_max', label: 'Max records', type: 'num', ph: String(DEFAULT_MAX), hint: `At most ${(50000).toLocaleString('en-US')}. With Order by, the first records in that order are kept.` },
+    { k: 'r_lang', label: 'Language (optional)', type: 'select', opts: LANG_OPTS },
+    { type: 'note', tone: 'info', label: 'Cost', text: COST_NOTE },
+    ...warnNote(recordWarnings('filters', v, cols)),
+  ];
+
+  const recPreviewFields = (v: FormValues, set: (k: string, val: any) => void): FormField[] => {
+    const r = toRecords(v);
+    loadRecPreview(r, String(v.name ?? '').trim(), set);
+    const e = rvCache.get(recordsKey(r));
+    const again: FormField = { type: 'button', label: 'Preview again', click: () => loadRecPreview(r, String(v.name ?? '').trim(), set, true) };
+    const head: FormField = { type: 'note', tone: 'info', label: 'The documents', text: recordsSummary(r) };
+    if (!e) return [head, { type: 'note', tone: 'info', text: `Reading ${r.table} and writing sample documents…` }];
+    if (e.missing) return [head, { type: 'note', tone: 'warn', label: 'No preview', text: `${e.error} The dataset can still be saved; the dataset page previews it after saving.` }];
+    if (e.error || !e.data) return [head, { type: 'note', tone: 'bad', label: 'The preview failed', text: `${e.error ?? 'No answer.'} Go back and fix the settings.` }, again];
+    const p = e.data;
+    const n = p.documents?.count ?? 0;
+    const sample = (p.documents?.sample ?? []).slice(0, 2);
+    return [
+      head,
+      { type: 'kv', label: 'What will be exported', rows: [['Documents', `${fmtCount(n)} ${n === 1 ? 'document' : 'documents'}`]] },
+      ...(p.problems.length
+        ? ([{ type: 'note', tone: 'warn', label: `${p.problems.length} ${p.problems.length === 1 ? 'problem' : 'problems'} found`, text: p.problems.join(' · ') }] as FormField[])
+        : ([{ type: 'note', tone: 'ok', text: 'No problems found.' }] as FormField[])),
+      ...sample.map((d, i) => ({ type: 'note', tone: 'info', label: `Document ${i + 1} · ${d.title}`, text: cardExcerpt(d.text) }) as FormField),
+      { type: 'note', tone: 'info', text: 'The generated SQL and up to five sample documents, laid out as documents, are shown on the dataset page after saving.' },
+      again,
+    ];
+  };
+
+  /** '' or the problem of a records step; applies the column defaults once per chosen table. */
+  const validateRec = (label: string, v: FormValues, set: (k: string, val: any) => void): string => {
+    const st = recStepOf(label, v.preset);
+    if (!st) return '';
+    const vv = withCols(v);
+    const cols = loadedColumns(vv);
+    if (st === 'preview') {
+      const e = rvCache.get(recordsKey(toRecords(vv)));
+      if (!e) return 'The preview is still running. Wait a moment.';
+      if (e.error && !e.missing) return `The preview failed: ${e.error} Go back and fix the settings.`;
+      return '';
+    }
+    const err = validateRecordStep(st, vv, cols);
+    if (err) return err;
+    if (st === 'table' && v._rdefaultsFor !== v.m_table) {
+      for (const [k, val] of Object.entries(recordDefaults(vv, cols))) set(k, val);
+      set('_rdefaultsFor', v.m_table);
+    }
+    return '';
+  };
+
   const stepValidate = (label: string, v: FormValues, set: (k: string, val: any) => void): string => {
     if (label === 'General') return validateDataset(0, v, check);
     if (label === 'Data') return validateDataset(1, v, check);
     if (label === 'Target collection') return validateDataset(2, v, check);
+    if (v.preset === PRESET_RECORDS) return validateRec(label, v, set);
     return validateMap(label, v, set);
   };
 
@@ -378,9 +519,24 @@ export function pgDatasetWizard({ ds, source, check, finish, mapping: deps }: Pg
       cur = v;
       const label = datasetSteps(v.preset)[step];
       const mapped = v.preset === PRESET_MAPPED;
-      const mst = mapStepOf(label);
+      const records = v.preset === PRESET_RECORDS;
+      const mst = mapStepOf(label, v.preset);
+      const rst = recStepOf(label, v.preset);
       let f: FormField[];
-      if (mst) {
+      if (rst) {
+        const vv = withCols(v);
+        const cols = loadedColumns(vv);
+        f =
+          rst === 'table'
+            ? tableFields(v, set)
+            : rst === 'record'
+              ? recordFields(vv, cols)
+              : rst === 'content'
+                ? contentFields(v, cols)
+                : rst === 'filters'
+                  ? recFilterFields(vv, cols)
+                  : recPreviewFields(vv, set);
+      } else if (mst) {
         const cols = loadedColumns(withCols(v));
         f =
           mst === 'table'
@@ -398,14 +554,26 @@ export function pgDatasetWizard({ ds, source, check, finish, mapping: deps }: Pg
         f = [
           { k: 'name', label: 'Dataset name', type: 'text', ph: 'e.g. SCEAI indicators' },
           { type: 'kv', rows: [['Data source', `${source.name} · ${source.host}:${source.port} / ${source.database}`]] },
-          { type: 'note', tone: 'info', text: 'A dataset is what the platform exports from this database to KAP: three indicator files (registry, observations, narratives) loaded into one KAP indicator collection.' },
+          {
+            type: 'note',
+            tone: 'info',
+            text: 'A dataset is what the platform exports from this database to KAP: three indicator files (registry, observations, narratives) loaded into one KAP indicator collection, or one document per record loaded into a document collection that agents search.',
+          },
         ];
       else if (label === 'Data') {
         const custom = v.preset === PRESET_CUSTOM;
         const warn = custom ? checkQueries({ registry: v.registry, observations: v.observations, narratives: v.narratives }).warnings : [];
         f = [
-          { k: 'preset', label: 'Mapping', type: 'select', opts: PRESET_OPTS, hint: custom ? 'Three SQL queries that return the columns KAP expects.' : mapped ? MAPPED_HINT : SCAI_HINT },
-          ...(mapped
+          { k: 'preset', label: 'Mapping', type: 'select', opts: PRESET_OPTS, hint: custom ? 'Three SQL queries that return the columns KAP expects.' : mapped ? MAPPED_HINT : records ? RECORDS_HINT : SCAI_HINT },
+          ...(records
+            ? ([
+                {
+                  type: 'note',
+                  tone: 'info',
+                  text: `Next: choose a table or view of ${source.database}, its ID column and document title, the columns that become fields and sections, and filters. KAP gets a document collection that agents search with hybrid_search. The last step previews sample documents before anything is saved.`,
+                },
+              ] as FormField[])
+            : mapped
             ? ([
                 {
                   type: 'note',
@@ -432,20 +600,36 @@ export function pgDatasetWizard({ ds, source, check, finish, mapping: deps }: Pg
               { type: 'kv', rows: [['Target collection', ds!.collection_name], ['KAP connector', ds!.kap?.connector ?? `${ds!.collection_name}_pg`], ['KAP pipeline', ds!.kap?.pipeline ?? `${ds!.collection_name}_pipeline`], ['Created in KAP', ds!.kap?.provisioned_at ? 'Yes' : 'At the first run']] },
               { type: 'note', tone: 'info', text: 'The target collection cannot change. Create another dataset to export into a new collection.' },
             ]
-          : [
-              { k: 'collection', label: 'Target collection (new)', type: 'text', ph: 'e.g. askai_indicators', hint: '4–29 letters, digits and underscores. A new KAP indicator collection.' },
-              { type: 'note', tone: 'info', text: `KAP gets an indicator collection ${n}, an S3 connector ${n}_pg and a pipeline ${n}_pipeline (created once, at the first run). Agents read the collection with the indicator tools, such as find_indicator.` },
-            ];
+          : records
+            ? [
+                { k: 'collection', label: 'Target collection (new)', type: 'text', ph: 'e.g. support_tickets', hint: '4–29 letters, digits and underscores. A new KAP document collection.' },
+                {
+                  type: 'note',
+                  tone: 'info',
+                  text: `KAP gets a document collection ${n}, searchable by agents with hybrid_search (one search result per record), an S3 connector ${n}_pg and a document pipeline ${n}_pipeline that parses, summarises and embeds each document (created once, at the first run).`,
+                },
+              ]
+            : [
+                { k: 'collection', label: 'Target collection (new)', type: 'text', ph: 'e.g. askai_indicators', hint: '4–29 letters, digits and underscores. A new KAP indicator collection.' },
+                { type: 'note', tone: 'info', text: `KAP gets an indicator collection ${n}, an S3 connector ${n}_pg and a pipeline ${n}_pipeline (created once, at the first run). Agents read the collection with the indicator tools, such as find_indicator.` },
+              ];
       } else if (label === 'Schedule')
         f = [
           { k: 'schedule', label: 'Schedule', type: 'select', opts: scheduleOpts(ds?.schedule_minutes) },
-          { type: 'note', tone: 'info', text: 'The platform runs scheduled exports. Each export replaces the files in the bucket; KAP loads them on its next scan. You can always run an export by hand.' },
+          {
+            type: 'note',
+            tone: 'info',
+            text: records
+              ? 'The platform runs scheduled exports. Each export writes only new and changed records and removes deleted ones; KAP summarises and loads them on its next scan. You can always run an export by hand.'
+              : 'The platform runs scheduled exports. Each export replaces the files in the bucket; KAP loads them on its next scan. You can always run an export by hand.',
+          },
         ];
       else {
         const vv = withCols(v);
         const patch = edit ? toPgDatasetPatch(ds!, vv) : null;
         const custom = v.preset === PRESET_CUSTOM;
         const m = mapped ? toMapping(vv) : null;
+        const r = records ? toRecords(vv) : null;
         f = [
           {
             type: 'kv',
@@ -453,8 +637,9 @@ export function pgDatasetWizard({ ds, source, check, finish, mapping: deps }: Pg
             rows: [
               ['Dataset', v.name],
               ['Data source', source.name],
-              ['Mapping', custom ? 'Custom SQL (3 queries)' : m ? `Map columns · ${m.table}` : PRESET_SCAI],
-              ...(custom || m ? [] : ([['Only published indicators', v.published]] as [string, unknown][])),
+              ['Mapping', custom ? 'Custom SQL (3 queries)' : m ? `Map columns · ${m.table}` : r ? `Records → documents · ${r.table}` : PRESET_SCAI],
+              ...(custom || m || r ? [] : ([['Only published indicators', v.published]] as [string, unknown][])),
+              ...(r ? ([['Document title', r.title], ['KAP collection', 'Document collection, searched with hybrid_search']] as [string, unknown][]) : []),
               ...(m ? ([['KAP ids', exampleId(m)]] as [string, unknown][]) : []),
               ['Target collection', edit ? ds!.collection_name : v.collection],
               ['Schedule', v.schedule],
@@ -462,9 +647,12 @@ export function pgDatasetWizard({ ds, source, check, finish, mapping: deps }: Pg
             ],
           },
           ...(m ? ([{ type: 'note', tone: 'info', label: 'The mapping', text: mappingSummary(m) }] as FormField[]) : []),
+          ...(r ? ([{ type: 'note', tone: 'info', label: 'The documents', text: recordsSummary(r) }] as FormField[]) : []),
           edit && !patch
             ? ({ type: 'note', tone: 'info', text: 'Nothing changed: the platform keeps the dataset as it is.' } as FormField)
-            : ({ type: 'note', tone: 'info', text: 'After saving, the console previews the three files (row counts, first rows and problems). You can run the export from the preview.' } as FormField),
+            : r
+              ? ({ type: 'note', tone: 'info', text: `After saving, the dataset page shows sample documents. ${COST_NOTE}` } as FormField)
+              : ({ type: 'note', tone: 'info', text: 'After saving, the console previews the three files (row counts, first rows and problems). You can run the export from the preview.' } as FormField),
         ];
       }
       return withDefaults(f, v);
