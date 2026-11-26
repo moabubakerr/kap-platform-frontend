@@ -32,6 +32,8 @@ export type FormField =
   | { type: 'chips'; k: string; label: string; val?: string[]; opts: string[]; hint?: string }
   | { type: 'textarea'; k: string; label: string; val?: string; ph?: string; hint?: string; rows?: number }
   | { type: 'note'; label?: string; text: string; tone?: 'ok' | 'bad' | 'warn' | 'info' }
+  /** pick a local text file: its name goes to `k`, its content to `into` (e.g. a textarea, so it can be reviewed) */
+  | { type: 'file'; k: string; label: string; into: string; accept?: string; val?: string; hint?: string }
   | { type: 'button'; label: string; click: () => void; hint?: string }
   | { type: 'kv'; label?: string; rows: [string, unknown][] }
   | { type: 'dgm'; label?: string; dgm: DiagramSpec };
@@ -184,6 +186,24 @@ function FieldView({ f, v, set }: { f: FormField; v: FormValues; set: (k: string
         <label className="flex flex-col gap-1.5">
           <span className="text-[13px] font-medium text-ink-strong">{f.label}</span>
           <textarea value={v[f.k] ?? ''} placeholder={f.ph} rows={f.rows ?? 5} onChange={(e) => set(f.k, e.target.value)} className="resize-y rounded-card border border-line bg-surface px-3 py-2 text-[13px] outline-none focus-visible:shadow-focus" />
+          {hint}
+        </label>
+      );
+    case 'file':
+      return (
+        <label className="flex flex-col gap-1.5">
+          <span className="text-[13px] font-medium text-ink-strong">{f.label}</span>
+          <input
+            type="file"
+            accept={f.accept}
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (!file) return;
+              set(f.k, file.name);
+              void file.text().then((text) => set(f.into, text));
+            }}
+            className="text-[13px] text-ink-body file:mr-3 file:rounded-card file:border file:border-line file:bg-surface file:px-3 file:py-1.5 file:text-[13px] file:font-medium file:text-ink-strong hover:file:bg-surface-sunken"
+          />
           {hint}
         </label>
       );

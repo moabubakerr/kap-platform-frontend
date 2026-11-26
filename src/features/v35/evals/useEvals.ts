@@ -117,8 +117,9 @@ export function useEvals(c: AgentsC, pageReload?: () => Promise<void>): EvalCtx 
         d.form(
           `Import questions · ${s.name}`,
           [
-            { type: 'note', tone: 'info', text: 'Paste CSV with a header row. Columns: question (required), expected, must_include, must_not_include, tags. Separate several facts with ";". Tab-separated text from a spreadsheet works too.' },
-            { type: 'textarea', k: 'csv', label: 'CSV', val: '', rows: 10, ph: CSV_EXAMPLE },
+            { type: 'note', tone: 'info', text: 'Choose a CSV file (or paste its text below). The first row names the columns: question (required), expected, must_include, must_not_include, tags. Separate several facts with ";". Tab-separated text copied from a spreadsheet works too.' },
+            { type: 'file', k: 'file', label: 'CSV file', into: 'csv', accept: '.csv,.tsv,.txt,text/csv,text/plain' },
+            { type: 'textarea', k: 'csv', label: 'Content', val: '', rows: 10, ph: CSV_EXAMPLE, hint: 'Filled from the file; you can check or edit it before importing.' },
             { type: 'select', k: 'mode', label: 'Existing questions', val: 'Keep them and add these', opts: ['Keep them and add these', 'Replace them with these'] },
           ],
           'Import',
