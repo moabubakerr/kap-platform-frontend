@@ -103,6 +103,7 @@ export const router = createBrowserRouter([
       // AI Agent Factory
       { path: 'agents', element: V('agents/AgentsPage') },
       { path: 'agents/evaluation', element: V('agents/EvalSetsPage') },
+      { path: 'agents/evaluation/runs/:runId', element: V('agents/EvalRunPage') },
       { path: 'agents/evaluation/:setId', element: V('agents/EvalSetPage') },
       { path: 'agents/:agentId/:tab?', element: V('agents/AgentPage') },
       { path: 'playground', element: V('playground/PlaygroundPage') },
