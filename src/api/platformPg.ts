@@ -58,12 +58,60 @@ export interface PgSqlPreview {
   truncated: boolean;
 }
 
-export type PgPreset = 'scai_indicators' | 'custom';
+export type PgPreset = 'scai_indicators' | 'mapped' | 'custom';
 export type PgFile = 'registry' | 'observations' | 'narratives';
 export interface PgQueries {
   registry: string;
   observations: string;
   narratives?: string;
+}
+
+/** A column of a table (`GET pg-sources/{id}/columns?table=`). `type`: PostgreSQL's type name. */
+export interface PgColumn {
+  name: string;
+  type: string;
+  nullable: boolean;
+}
+export interface PgColumns {
+  table: string;
+  columns: PgColumn[];
+}
+
+export type PgFreq = 'A' | 'Q' | 'M';
+/** A fixed text for every row, or a column of the table. */
+export type PgValueOrColumn = { value: string } | { column: string };
+export type PgFilterOp = '=' | '!=' | 'is_true' | 'is_false' | 'is_not_null';
+export interface PgMappingFilter {
+  column: string;
+  op: PgFilterOp;
+  value?: string;
+}
+
+/**
+ * Preset `mapped`: the platform writes the SQL from a column mapping of one table.
+ * KAP ids: `<id_prefix>.<series key slug>.<a|q|m>.<overall|dimension slug>`.
+ */
+export interface PgMapping {
+  /** `schema.name` */
+  table: string;
+  /** ≥1 column; their distinct values identify a series */
+  series_key: string[];
+  /** `[a-z0-9_]{1,24}` */
+  id_prefix: string;
+  /** `text`: values already look like YYYY, YYYY-Qn or YYYY-MM */
+  period: { column: string; kind: 'date' | 'text' };
+  frequency: { value: PgFreq } | { column: string; map: Record<string, PgFreq> };
+  value: string;
+  target?: string | null;
+  name_en?: string | null;
+  name_ar?: string | null;
+  unit?: PgValueOrColumn | null;
+  source?: PgValueOrColumn | null;
+  definition?: string | null;
+  dimension?: string | null;
+  /** values of the dimension column that mean the main (overall) series */
+  domestic_values?: string[] | null;
+  filters?: PgMappingFilter[] | null;
 }
 
 export interface PgDataset {
@@ -73,6 +121,8 @@ export interface PgDataset {
   name: string;
   preset: PgPreset;
   queries: PgQueries | null;
+  /** preset `mapped` only (null otherwise; older platforms leave it out) */
+  mapping?: PgMapping | null;
   published_only: boolean;
   collection_name: string;
   schedule_minutes: number | null;
@@ -88,6 +138,7 @@ export interface PgDatasetCreate {
   name: string;
   preset: PgPreset;
   queries?: PgQueries;
+  mapping?: PgMapping;
   published_only?: boolean;
   collection_name: string;
   schedule_minutes?: number | null;
@@ -102,6 +153,12 @@ export interface PgFilePreview {
 export interface PgDatasetPreview {
   files: Partial<Record<PgFile, PgFilePreview>>;
   problems: string[];
+  /** the SQL the platform generated (mapped datasets) */
+  queries?: PgQueries;
+}
+/** `POST pg-sources/{id}/mapping-preview`: a mapping tried before it is saved. */
+export interface PgMappingPreview extends PgDatasetPreview {
+  queries: PgQueries;
 }
 
 export type ExportStatus = 'queued' | 'running' | 'waiting_for_kap' | 'succeeded' | 'failed';
@@ -227,6 +284,11 @@ export const patchPgSource = (tid: string, id: string, body: PgSourcePatch) => p
 export const deletePgSource = (tid: string, id: string) => pgCall<void>(tid, 'DELETE', `pg-sources/${id}`);
 export const testPgSource = (tid: string, id: string) => pgCall<PgTestResult>(tid, 'POST', `pg-sources/${id}/test`);
 export const previewPgSql = (tid: string, id: string, sql: string, limit = 20) => pgCall<PgSqlPreview>(tid, 'POST', `pg-sources/${id}/preview`, { sql, limit });
+/** Columns of `schema.name`; 404 `not_found` when the table is unknown. */
+export const getPgColumns = (tid: string, id: string, table: string) => pgCall<PgColumns>(tid, 'GET', `pg-sources/${id}/columns`, undefined, { table });
+/** The three files and the generated SQL of a column mapping, before it is saved. */
+export const previewPgMapping = (tid: string, id: string, mapping: PgMapping, limit?: number) =>
+  pgCall<PgMappingPreview>(tid, 'POST', `pg-sources/${id}/mapping-preview`, limit != null ? { mapping, limit } : { mapping });
 
 // ------------------------------------------------------------------ datasets
 export const listPgDatasets = (tid: string, q: { source_id?: string; limit?: number; offset?: number } = {}) => pgCall<PgPage<PgDataset>>(tid, 'GET', 'pg-datasets', undefined, { limit: 200, ...q });

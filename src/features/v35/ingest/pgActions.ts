@@ -7,12 +7,15 @@ import type { useDialogs } from '@/engine/dialogs';
 import { liveSave, type Live } from '@/v35/live';
 import type { IngestTenantKey } from '@/v35/data/ingest';
 import {
-  createPgDataset, createPgSource, deletePgDataset, deletePgSource, patchPgDataset, patchPgSource, previewPgDataset, runPgDataset, testPgSource, type PgDataset, type PgSource,
+  createPgDataset, createPgSource, deletePgDataset, deletePgSource, getPgColumns, patchPgDataset, patchPgSource, previewPgDataset, previewPgMapping, runPgDataset, testPgSource, type PgDataset, type PgSource,
 } from '@/api/platformPg';
 import type { IngestNav } from './build';
 import { pgPreviewStore, pgTestStore, putExport } from './pgLive';
-import { CONNECTION_KEYS, pgDatasetWizard, pgSourceWizard } from './pgWizards';
-import { pgRunId, presetLabel, testSummary, toPgDatasetCreate, toPgDatasetPatch, toPgSourceCreate, toPgSourcePatch, type PgState } from './pgView';
+import { CONNECTION_KEYS, pgDatasetWizard, pgSourceWizard, type PgMappingDeps } from './pgWizards';
+import { pgRunId, presetName, testSummary, toPgDatasetCreate, toPgDatasetPatch, toPgSourceCreate, toPgSourcePatch, type PgState } from './pgView';
+
+/** Rows the wizard's mapping preview asks for per file. */
+const MAPPING_PREVIEW_ROWS = 5;
 
 type Dialogs = ReturnType<typeof useDialogs>;
 
@@ -54,10 +57,11 @@ export function makePgActs({ d, live, tid, t, P, sourceNames, kapCollections, au
   const dset = (id: string) => P()?.datasets.find((x) => x.id === id) ?? null;
   const msg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
-  const testSource = (id: string) => {
+  /** Runs a connection test and keeps its tables; resolves to '' or the problem. */
+  const runTest = (id: string): Promise<string> => {
     const s = src(id);
-    if (!s) return;
-    testPgSource(tid, id).then(
+    if (!s) return Promise.resolve('The data source no longer exists.');
+    return testPgSource(tid, id).then(
       (r) => {
         pgTestStore.update((all) => {
           all[id] = { ...r, at: Date.now() };
@@ -66,10 +70,26 @@ export function makePgActs({ d, live, tid, t, P, sourceNames, kapCollections, au
         if (r.ok) d.toast(`${s.name}: connection test succeeded · ${testSummary(r)}.`);
         else toast.error(`${s.name}: connection test failed. ${r.message}`);
         void live.reload();
+        return r.ok ? '' : r.message || 'The connection test failed.';
       },
-      (e) => toast.error(`${s.name}: the connection test could not run. ${msg(e)}`),
+      (e) => {
+        toast.error(`${s.name}: the connection test could not run. ${msg(e)}`);
+        return msg(e);
+      },
     );
   };
+  const testSource = (id: string) => void runTest(id);
+
+  /** The column-mapping steps of the dataset wizard, bound to this source. */
+  const mappingDeps = (sourceId: string): PgMappingDeps => ({
+    tables: () => {
+      const r = pgTestStore.get()[sourceId];
+      return r?.ok ? r.tables : null;
+    },
+    test: () => runTest(sourceId),
+    columns: (table) => getPgColumns(tid, sourceId, table),
+    preview: (m) => previewPgMapping(tid, sourceId, m, MAPPING_PREVIEW_ROWS),
+  });
 
   const previewDataset = (id: string) => {
     pgPreviewStore.update((all) => {
@@ -161,7 +181,7 @@ export function makePgActs({ d, live, tid, t, P, sourceNames, kapCollections, au
         return d.info(
           `Delete ${s.name}?`,
           'Datasets export from this source. Delete them first (Datasets section of this page):',
-          used.map((x) => ({ a: x.name, b: presetLabel(x.preset), c: `→ ${x.collection_name}` })),
+          used.map((x) => ({ a: x.name, b: presetName(x.preset), c: `→ ${x.collection_name}` })),
         );
       d.confirm(`Delete ${s.name}?`, 'The platform removes the connection settings and the stored password. Nothing changes in the database itself.', [], 'Delete', () =>
         liveSave(live, () => deletePgSource(tid, s.id)).then((e) => {
@@ -183,6 +203,7 @@ export function makePgActs({ d, live, tid, t, P, sourceNames, kapCollections, au
           ds: null,
           source: s,
           check: { names: others.map((x) => x.name), collections: [...kapCollections(), ...others.map((x) => x.collection_name)], edit: false },
+          mapping: mappingDeps(s.id),
           finish: async (v) => {
             const body = toPgDatasetCreate(v, s.id);
             const box: { ds?: PgDataset } = {};
@@ -190,7 +211,7 @@ export function makePgActs({ d, live, tid, t, P, sourceNames, kapCollections, au
               box.ds = await createPgDataset(tid, body);
             });
             if (e) return e;
-            audit('Created dataset', `${body.name} · ${s.name} → collection ${body.collection_name} · ${presetLabel(body.preset)}`);
+            audit('Created dataset', `${body.name} · ${s.name} → collection ${body.collection_name} · ${presetName(body.preset)}${body.mapping ? ` · table ${body.mapping.table}` : ''}`);
             d.toast(`Created ${body.name}. Previewing the files…`);
             const id = box.ds?.id;
             if (id)
@@ -214,6 +235,7 @@ export function makePgActs({ d, live, tid, t, P, sourceNames, kapCollections, au
           ds: x,
           source: s,
           check: { names: others.map((y) => y.name), collections: [], edit: true },
+          mapping: mappingDeps(s.id),
           finish: async (v) => {
             const patch = toPgDatasetPatch(x, v);
             if (!patch) return '';
@@ -221,7 +243,7 @@ export function makePgActs({ d, live, tid, t, P, sourceNames, kapCollections, au
             if (e) return e;
             audit('Edited dataset', `${x.name} · ${Object.keys(patch).join(', ')}`);
             d.toast(`Saved ${String(v.name).trim()}.`);
-            if ('queries' in patch || 'preset' in patch || 'published_only' in patch)
+            if ('queries' in patch || 'mapping' in patch || 'preset' in patch || 'published_only' in patch)
               window.setTimeout(() => {
                 go.source(s.name, datasetTab(x.id));
                 previewDataset(x.id);

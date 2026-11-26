@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createPgDataset, createPgSource, deletePgSource, listPgExports, listPgSources, patchPgSource, PG_FEATURE_MISSING, PgApiError, pgUrl, previewPgDataset, runPgDataset, testPgSource } from './platformPg';
+import {
+  createPgDataset, createPgSource, deletePgSource, getPgColumns, listPgExports, listPgSources, patchPgDataset, patchPgSource, PG_FEATURE_MISSING, PgApiError, pgUrl, previewPgDataset, previewPgMapping, runPgDataset, testPgSource, type PgMapping,
+} from './platformPg';
 
 const T = '71b6c98a-7f7a-4a8b-ab31-132c85bdc88b';
 
@@ -82,6 +84,44 @@ describe('platformPg client', () => {
     const e3 = await err(testPgSource(T, 's9'));
     expect(e3!.routeMissing).toBe(false);
     expect(e3!.message).toBe('No PostgreSQL source s9');
+  });
+
+  it('reads the columns of a table (schema.name, URL-encoded)', async () => {
+    const f = mockFetch(json({ table: 'public.monthly_sales', columns: [{ name: 'revenue', type: 'numeric', nullable: true }] }));
+    const r = await getPgColumns(T, 's1', 'public.monthly_sales');
+    expect(r.columns[0]).toEqual({ name: 'revenue', type: 'numeric', nullable: true });
+    expect(f.mock.calls[0][0]).toBe(`/api/platform/t/${T}/pg-sources/s1/columns?table=public.monthly_sales`);
+    expect(f.mock.calls[0][1].method).toBe('GET');
+    expect(f.mock.calls[0][1].body).toBeUndefined();
+    mockFetch(json({ table: 'a b.c&d', columns: [] }));
+    await getPgColumns(T, 's1', 'a b.c&d');
+    expect((fetch as any).mock.calls[0][0]).toBe(`/api/platform/t/${T}/pg-sources/s1/columns?table=a+b.c%26d`);
+  });
+
+  it('keeps an unknown table apart from a missing route', async () => {
+    mockFetch(json({ type: 'not_found', message: 'No table public.nope' }, 404));
+    const e = await err(getPgColumns(T, 's1', 'public.nope'));
+    expect(e!.type).toBe('not_found');
+    expect(e!.routeMissing).toBe(false);
+    expect(e!.message).toBe('No table public.nope');
+  });
+
+  it('previews a mapping, and sends a mapped dataset', async () => {
+    const mapping: PgMapping = { table: 'public.monthly_sales', series_key: ['region_code'], id_prefix: 'sales', period: { column: 'month', kind: 'date' }, frequency: { value: 'M' }, value: 'revenue' };
+    const pv = { files: { registry: { columns: ['indicator_id'], rows: [['sales.doha.m.overall']], count: 1 } }, problems: [], queries: { registry: 'SELECT 1', observations: 'SELECT 2' } };
+    const f = mockFetch(json(pv), json(pv), json({ id: 'd1', preset: 'mapped', mapping }, 201), json({ id: 'd1' }));
+    expect((await previewPgMapping(T, 's1', mapping, 10)).queries.registry).toBe('SELECT 1');
+    await previewPgMapping(T, 's1', mapping);
+    await createPgDataset(T, { source_id: 's1', name: 'Sales', preset: 'mapped', mapping, collection_name: 'sales_ind', schedule_minutes: null });
+    await patchPgDataset(T, 'd1', { mapping: { ...mapping, value: 'net_revenue' } });
+    const [c0, c1, c2, c3] = f.mock.calls;
+    expect(c0[0]).toBe(`/api/platform/t/${T}/pg-sources/s1/mapping-preview`);
+    expect(c0[1].method).toBe('POST');
+    expect(JSON.parse(c0[1].body)).toEqual({ mapping, limit: 10 });
+    expect(JSON.parse(c1[1].body)).toEqual({ mapping });
+    expect(JSON.parse(c2[1].body)).toMatchObject({ preset: 'mapped', mapping: { table: 'public.monthly_sales', frequency: { value: 'M' } } });
+    expect(c3[1].method).toBe('PATCH');
+    expect(JSON.parse(c3[1].body).mapping.value).toBe('net_revenue');
   });
 
   it('reports an unreachable platform', async () => {

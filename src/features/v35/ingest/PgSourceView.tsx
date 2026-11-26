@@ -8,14 +8,15 @@ import { act, cell, fr } from '@/engine/build';
 import { ScreenView } from '@/engine/ScreenView';
 import type { Row, ScreenModel, Section } from '@/engine/types';
 import { Button } from '@/components/ui/button';
-import { PG_FEATURE_MISSING, type PgDataset, type PgSource } from '@/api/platformPg';
+import { PG_FEATURE_MISSING, type PgDataset, type PgMapping, type PgQueries, type PgSource } from '@/api/platformPg';
+import { exampleId, mappingRows, mappingSummary } from './pgMapping';
 import type { Source } from '@/v35/data/ingest';
 import { rel } from './fromKap';
 import { srcP } from './logic';
 import { datasetOfTab } from './pgActions';
 import { pgPreviewStore, pgTestStore, type PreviewState } from './pgLive';
 import {
-  cellText, countsText, EXPORT_STATUS_LABEL, exportStatus, fmtCount, fmtRowsEstimate, lastRunText, nextRunText, pgOfSource, pgRunId, presetLabel, previewFiles, scheduleLabel, SSL_HINT, testSummary, triggerLabel,
+  cellText, countsText, EXPORT_STATUS_LABEL, exportStatus, fmtCount, fmtRowsEstimate, lastRunText, nextRunText, pgOfSource, pgRunId, presetName, previewFiles, scheduleLabel, SSL_HINT, testSummary, triggerLabel,
 } from './pgView';
 import type { PgCtx, useIngest } from './useIngest';
 
@@ -146,6 +147,43 @@ function PreviewPanel({ ds, st, canRun, onPreview, onRun }: { ds: PgDataset; st:
   );
 }
 
+// ------------------------------------------------------------------ column mapping
+function SqlBlock({ label, sql }: { label: string; sql: string }) {
+  return (
+    <details className="group rounded-sm border border-line-subtle">
+      <summary className="cursor-pointer select-none px-3 py-2 text-[13px] font-medium text-ink-strong">{label}</summary>
+      <pre className="max-h-[360px] overflow-auto whitespace-pre border-t border-line-subtle bg-surface-sunken px-3 py-2.5 font-mono text-[12px] leading-[1.5] text-ink-body">{sql}</pre>
+    </details>
+  );
+}
+
+/** A mapped dataset: the mapping in words and as rows, and the SQL the platform generated (from the dataset or its last preview). */
+function MappingPanel({ m, queries }: { m: PgMapping; queries: PgQueries | null | undefined }) {
+  return (
+    <div className="card flex flex-col gap-3 px-4 py-3.5">
+      <p className="text-[13.5px] leading-[1.5] text-ink-body">{mappingSummary(m)}</p>
+      <div className="rounded-sm border border-line-subtle">
+        {mappingRows(m).map(([k, v]) => (
+          <div key={k} className="grid gap-3 border-t border-line-subtle px-3 py-1.5 text-[13px] first:border-t-0" style={{ gridTemplateColumns: '170px minmax(0,1fr)' }}>
+            <span className="text-ink-muted">{k}</span>
+            <span className={k === 'KAP ids' || k === 'Table' ? 'font-mono text-[12.5px] [overflow-wrap:anywhere]' : '[overflow-wrap:anywhere]'}>{v}</span>
+          </div>
+        ))}
+      </div>
+      {queries ? (
+        <div className="flex flex-col gap-2">
+          <div className="text-[12px] text-ink-muted">The SQL the platform runs for this mapping (read-only; change the mapping with Edit).</div>
+          <SqlBlock label="Generated SQL · registry.csv" sql={queries.registry} />
+          <SqlBlock label="Generated SQL · observations.csv" sql={queries.observations} />
+          {queries.narratives ? <SqlBlock label="Generated SQL · narratives.csv" sql={queries.narratives} /> : null}
+        </div>
+      ) : (
+        <div className="text-[12px] text-ink-muted">Preview the dataset to see the SQL the platform generates from this mapping.</div>
+      )}
+    </div>
+  );
+}
+
 // ------------------------------------------------------------------ page
 function connectionSection(c: Ctx, s: PgSource, st: Source['st']): Section {
   const A = c.pg.a;
@@ -203,7 +241,7 @@ function datasetsSection(c: Ctx, s: PgSource, datasets: PgDataset[], selId: stri
         key: `ds:${x.id}`,
         cells: [
           cell(x.name, { m: true, sub: x.id === selId ? 'Open below' : undefined }),
-          cell(presetLabel(x.preset), { sub: x.preset === 'scai_indicators' ? (x.published_only ? 'Published indicators only' : 'All indicators') : 'Three SQL queries' }),
+          cell(presetName(x.preset), { sub: x.preset === 'scai_indicators' ? (x.published_only ? 'Published indicators only' : 'All indicators') : x.preset === 'mapped' ? (x.mapping ? `Table ${x.mapping.table}` : 'One table') : 'Three SQL queries' }),
           cell(x.collection_name, { sub: x.kap?.provisioned_at ? 'Created in KAP' : 'Created at the first run' }),
           cell(scheduleLabel(x.schedule_minutes), { sub: x.schedule_minutes ? nextRunText(x.next_run_at, now) : undefined }),
           x.last_run ? cell('', { p: [exportStatus(x.last_run.status) === 'Succeeded' ? 'approved' : exportStatus(x.last_run.status) === 'Failed' ? 'rejected' : 'submitted', lastRunText(x, now)] }) : cell('Never run'),
@@ -234,8 +272,16 @@ function datasetSections(c: Ctx, s: PgSource, x: PgDataset, preview: PreviewStat
         act('Close', () => c.go.source(s.name)),
       ],
       rows: [
-        fr('Mapping', presetLabel(x.preset), x.preset === 'scai_indicators' ? 'Built-in mapping for the Ask AI database' : 'Custom SQL: registry, observations and narratives queries'),
-        ...(x.preset === 'scai_indicators' ? [fr('Only published indicators', x.published_only ? 'Yes' : 'No')] : [fr('Queries', ['registry', 'observations', ...(x.queries?.narratives ? ['narratives'] : [])].join(', '), 'Shown in Edit')]),
+        fr(
+          'Mapping',
+          presetName(x.preset),
+          x.preset === 'scai_indicators' ? 'Built-in mapping for the Ask AI database' : x.preset === 'mapped' ? 'Columns of one table; the platform writes the SQL (see Column mapping below)' : 'Custom SQL: registry, observations and narratives queries',
+        ),
+        ...(x.preset === 'scai_indicators'
+          ? [fr('Only published indicators', x.published_only ? 'Yes' : 'No')]
+          : x.preset === 'mapped'
+            ? [fr('Table', x.mapping?.table ?? '—', x.mapping ? `KAP ids look like ${exampleId(x.mapping)}` : 'The platform did not return the mapping')]
+            : [fr('Queries', ['registry', 'observations', ...(x.queries?.narratives ? ['narratives'] : [])].join(', '), 'Shown in Edit')]),
         fr('Target collection', x.collection_name, k?.provisioned_at ? 'KAP indicator collection; agents read it with indicator tools such as find_indicator' : 'Created in KAP at the first run', k?.collection_id ? [act('Open', () => c.go.collection(x.collection_name))] : []),
         fr('KAP connector and pipeline', `${k?.connector ?? `${x.collection_name}_pg`} · ${k?.pipeline ?? `${x.collection_name}_pipeline`}`, k?.provisioned_at ? `Created ${rel(k.provisioned_at, now)}` : 'Not created yet', [
           ...(k?.connector && k.provisioned_at ? [act('Open connector', () => c.go.source(k.connector))] : []),
@@ -245,6 +291,7 @@ function datasetSections(c: Ctx, s: PgSource, x: PgDataset, preview: PreviewStat
         fr('Last run', lastRunText(x, now), '', x.last_run ? [act('Open run', () => c.go.run(pgRunId(x.last_run!.id)))] : []),
       ],
     },
+    ...(x.preset === 'mapped' && x.mapping ? [{ title: 'Column mapping', custom: <MappingPanel m={x.mapping} queries={preview?.data?.queries ?? x.queries} /> } as Section] : []),
     {
       title: 'Preview',
       custom: <PreviewPanel ds={x} st={preview} canRun={c.canRun} onPreview={() => A.previewDataset(x.id)} onRun={() => A.runDataset(x.id)} />,

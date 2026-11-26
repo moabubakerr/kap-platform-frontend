@@ -10,6 +10,7 @@ import type { IngestTenant, Run, RunStatus, Source, SourceStatus } from '@/v35/d
 import type { ExportRun, ExportStatus, ExportStepState, PgDataset, PgDatasetCreate, PgDatasetPatch, PgDatasetPreview, PgFile, PgPreset, PgSource, PgSourceCreate, PgSourcePatch, PgTestResult } from '@/api/platformPg';
 import { kapOfRun, rel, span } from './fromKap';
 import { hhmmss, type RunStep, type StepState } from './runView';
+import { mappingKey, mappingValues, toMapping } from './pgMapping';
 
 // ------------------------------------------------------------------ state
 /** The platform's PostgreSQL records of a live tenant. `missing`: the platform API has no such routes yet. */
@@ -55,11 +56,17 @@ export const SSL_HINT: Record<string, string> = {
   'verify-full': 'Always encrypt and verify the certificate and host name.',
 };
 
-export const PRESET_SCAI = 'SCEAI indicators';
+/** Options of the wizard's Mapping choice (form values hold these labels). */
+export const PRESET_SCAI = 'SCEAI indicators (built-in)';
+export const PRESET_MAPPED = 'Map columns (no SQL)';
 export const PRESET_CUSTOM = 'Custom SQL';
-export const presetLabel = (p: PgPreset | string) => (p === 'scai_indicators' ? PRESET_SCAI : PRESET_CUSTOM);
-export const presetOf = (label: string): PgPreset => (label === PRESET_CUSTOM ? 'custom' : 'scai_indicators');
+export const PRESET_OPTS = [PRESET_SCAI, PRESET_MAPPED, PRESET_CUSTOM];
+export const presetLabel = (p: PgPreset | string) => (p === 'scai_indicators' ? PRESET_SCAI : p === 'mapped' ? PRESET_MAPPED : PRESET_CUSTOM);
+export const presetOf = (label: string): PgPreset => (label === PRESET_CUSTOM ? 'custom' : label === PRESET_MAPPED ? 'mapped' : 'scai_indicators');
+/** Short name of a preset for lists and the audit trail. */
+export const presetName = (p: PgPreset | string) => (p === 'scai_indicators' ? 'SCEAI indicators' : p === 'mapped' ? 'Column mapping' : 'Custom SQL');
 export const SCAI_HINT = 'Built-in mapping for the Ask AI database (scai_indicators: indicators, indicator_details, indicator_values, indicator_analysis).';
+export const MAPPED_HINT = 'Recommended for other databases: choose a table and say which column is the series, the period and the value. The platform writes the SQL.';
 
 export const SCHEDULES: [string, number | null][] = [
   ['Manual only', null],
@@ -422,6 +429,7 @@ const YES = 'Yes';
 
 export function datasetValues(d: PgDataset | null): FormValues {
   return {
+    ...mappingValues(d?.preset === 'mapped' ? d.mapping : null),
     name: d?.name ?? '',
     preset: presetLabel(d?.preset ?? 'scai_indicators'),
     published: d ? (d.published_only ? YES : 'No') : YES,
@@ -471,7 +479,7 @@ export function toPgDatasetCreate(v: FormValues, sourceId: string): PgDatasetCre
     source_id: sourceId,
     name: String(v.name).trim(),
     preset,
-    ...(preset === 'custom' ? { queries: queriesOf(v) } : { published_only: v.published !== 'No' }),
+    ...(preset === 'custom' ? { queries: queriesOf(v) } : preset === 'mapped' ? { mapping: toMapping(v) } : { published_only: v.published !== 'No' }),
     collection_name: String(v.collection).trim(),
     schedule_minutes: scheduleMinutes(v.schedule),
   };
@@ -488,6 +496,9 @@ export function toPgDatasetPatch(d: PgDataset, v: FormValues): PgDatasetPatch | 
     const q = queriesOf(v);
     const cur = d.queries ?? { registry: '', observations: '' };
     if (q.registry !== cur.registry || q.observations !== cur.observations || (q.narratives ?? '') !== (cur.narratives ?? '')) p.queries = q;
+  } else if (preset === 'mapped') {
+    const m = toMapping(v);
+    if (d.preset !== 'mapped' || mappingKey(m) !== mappingKey(d.mapping)) p.mapping = m;
   } else if ((v.published !== 'No') !== d.published_only) p.published_only = v.published !== 'No';
   const min = scheduleMinutes(v.schedule, d.schedule_minutes);
   if ((min ?? null) !== (d.schedule_minutes ?? null)) p.schedule_minutes = min;
