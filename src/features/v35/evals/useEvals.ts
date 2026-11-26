@@ -14,7 +14,7 @@ import { kapOf } from '@/features/v35/agents/fromKap';
 import type { useAgents } from '@/features/v35/agents/useAgents';
 import type { EvalCtx } from './evalBuild';
 import { forgetRun, forgetSet, loadEvalRun, loadEvalSet, putRun, useEvalLists } from './evalLive';
-import { CSV_EXAMPLE, parseCasesCsv, parseTerms, runLabelOf, termsText } from './evalView';
+import { caseProblem, CSV_EXAMPLE, parseCasesCsv, parseTerms, runLabelOf, termsText } from './evalView';
 
 type AgentsC = ReturnType<typeof useAgents>;
 
@@ -27,9 +27,9 @@ export const PARALLEL_OPTS = ['1', '2', '3', '4'];
 
 export function caseFields(x?: EvalCase | null): FormField[] {
   return [
-    { type: 'textarea', k: 'question', label: 'Question', val: x?.question ?? '', rows: 3, ph: 'What was the inflation rate in March 2026 in Qatar and Kuwait?' },
-    { type: 'textarea', k: 'must_include', label: 'Must include', val: termsText(x?.must_include), rows: 3, ph: '4.17\n2.06', hint: 'One fact per line. Numbers match at the precision you write. "Kuwait | الكويت" accepts either.' },
-    { type: 'textarea', k: 'expected', label: 'Reference answer (optional)', val: x?.expected ?? '', rows: 3, hint: 'What a correct answer says. The AI judge compares the answer with it.' },
+    { type: 'textarea', k: 'question', label: 'Question', val: x?.question ?? '', rows: 3, ph: 'What is the latest inflation rate?' },
+    { type: 'textarea', k: 'expected', label: 'Expected answer', val: x?.expected ?? '', rows: 3, ph: '2.62% in April 2026', hint: 'What a correct answer says, in your own words. The AI judge compares the agent’s answer with it.' },
+    { type: 'textarea', k: 'must_include', label: 'Must include', val: termsText(x?.must_include), rows: 3, ph: '2.62\nApril 2026', hint: 'Short facts the answer must contain, one per line: a number or a name, not a sentence. Numbers match at the precision you write. "Kuwait | الكويت" accepts either.' },
     { type: 'textarea', k: 'must_not_include', label: 'Must not include (optional)', val: termsText(x?.must_not_include), rows: 2, hint: 'One per line, e.g. a wrong figure or "I don’t know".' },
     { type: 'text', k: 'tags', label: 'Tags (optional)', val: (x?.tags ?? []).join('; '), hint: 'Separated by ;' },
   ];
@@ -105,15 +105,12 @@ export function useEvals(c: AgentsC, pageReload?: () => Promise<void>): EvalCtx 
       addCase: (s) =>
         d.form(`Add question · ${s.name}`, caseFields(), 'Add', (v) => {
           const x = caseOf(v);
-          if (!x.question) return 'Enter the question.';
-          if (!x.must_include?.length && !x.expected) return 'Add at least one fact the answer must include, or a reference answer, so the answer can be checked.';
-          return save(() => addEvalCases(tid!, s.id, [x]));
+          return caseProblem(x) || save(() => addEvalCases(tid!, s.id, [x]));
         }),
       editCase: (s, x0) =>
         d.form('Edit question', caseFields(x0), 'Save', (v) => {
           const x = caseOf(v);
-          if (!x.question) return 'Enter the question.';
-          return save(() => patchEvalCase(tid!, s.id, x0.id, x));
+          return caseProblem(x) || save(() => patchEvalCase(tid!, s.id, x0.id, x));
         }),
       deleteCase: (s, x0) => d.confirm('Delete question', x0.question, [], 'Delete', async () => (await save(() => deleteEvalCase(tid!, s.id, x0.id))) || undefined),
       importCsv: (s) =>
@@ -128,6 +125,8 @@ export function useEvals(c: AgentsC, pageReload?: () => Promise<void>): EvalCtx 
           (v) => {
             const { cases, errors } = parseCasesCsv(String(v.csv ?? ''));
             if (!cases.length) return errors.join(' ') || 'No questions found.';
+            const bad = cases.map((x, i) => [i, caseProblem(x)] as const).find(([, p]) => p);
+            if (bad) return `Row ${bad[0] + 2}: ${bad[1]}`;
             return save(
               () => addEvalCases(tid!, s.id, cases, v.mode === 'Replace them with these'),
               () => d.toast(`Imported ${cases.length} ${cases.length === 1 ? 'question' : 'questions'}${errors.length ? ` · ${errors.join(' ')}` : ''}`),
@@ -201,10 +200,10 @@ export function useEvals(c: AgentsC, pageReload?: () => Promise<void>): EvalCtx 
         const s = sets.find((y) => y.id === r.set_id);
         if (!s || !x.case_id) return;
         d.form(
-          'Use this answer as reference',
+          'Use this answer as the expected answer',
           [
             { type: 'note', tone: 'warn', text: 'Only do this after checking that the agent’s answer is right (for example the test question was wrong or out of date).' },
-            { type: 'textarea', k: 'expected', label: 'Reference answer', val: x.answer ?? '', rows: 5 },
+            { type: 'textarea', k: 'expected', label: 'Expected answer', val: x.answer ?? '', rows: 5 },
             { type: 'textarea', k: 'must_include', label: 'Must include', val: termsText(x.must_include), rows: 3, hint: 'One fact per line' },
           ],
           'Save to test set',

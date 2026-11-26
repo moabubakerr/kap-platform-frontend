@@ -140,7 +140,7 @@ export function setsScreen(c: EvalCtx): ScreenModel {
 function caseKv(x: EvalCase): KV[] {
   return [
     { k: 'Question', v: x.question },
-    { k: 'Reference answer', v: x.expected || '— (the judge checks against the evidence only)' },
+    { k: 'Expected answer', v: x.expected || '— (the judge checks against the evidence only)' },
     { k: 'Must include', v: x.must_include.join('\n') || '—' },
     { k: 'Must not include', v: x.must_not_include.join('\n') || '—' },
     { k: 'Tags', v: x.tags.join(', ') || '—' },
@@ -165,14 +165,14 @@ export function setScreen(c: EvalCtx, setId: string): ScreenModel {
       {
         title: 'Questions',
         badge: String(cases?.length ?? s.case_count),
-        note: 'Facts in "Must include" are checked in every answer; "a | b" accepts either. Numbers match at the precision you write: 2.6 accepts 2.62, 2.62 does not accept 2.6.',
+        note: 'The AI judge compares each answer with the expected answer. Facts in "Must include" are checked in every answer; "a | b" accepts either. Numbers match at the precision you write: 2.6 accepts 2.62, 2.62 does not accept 2.6.',
         sacts: c.canEdit ? [act('Add question', () => c.a.addCase(s), 'primary'), act('Import CSV', () => c.a.importCsv(s))] : [],
         mode: 'panel',
         empty: !cases ? 'Loading questions…' : 'No questions yet. Add them one by one or import a CSV.',
-        cols: ['#', 'Question', 'Must include', 'Reference answer'],
+        cols: ['#', 'Question', 'Expected answer', 'Must include'],
         rows: (cases ?? []).map((x, i) => ({
           key: 'ec:' + x.id,
-          cells: [cell(String(i + 1)), cell(trunc(x.question), { sub: x.tags.join(', ') || undefined }), cell(x.must_include.join(' · ') || '—'), cell(x.expected ? trunc(x.expected, 70) : '—')],
+          cells: [cell(String(i + 1)), cell(trunc(x.question), { sub: x.tags.join(', ') || undefined }), cell(x.expected ? trunc(x.expected, 70) : '—'), cell(x.must_include.join(' · ') || '—')],
           kv: caseKv(x),
           keepKv: true,
           acts: c.canEdit ? [act('Edit', () => c.a.editCase(s, x)), act('Delete', () => c.a.deleteCase(s, x), 'danger')] : [],
@@ -189,7 +189,7 @@ function resultKv(x: EvalResult): KV[] {
   const kv: KV[] = [
     { k: 'Question', v: x.question },
     { k: 'Answer', v: x.answer || (x.status === 'pending' || x.status === 'submitted' ? 'Not answered yet' : '— (no answer)') },
-    { k: 'Reference answer', v: x.expected || '—' },
+    { k: 'Expected answer', v: x.expected || '—' },
   ];
   if (x.reason) kv.push({ k: x.passed ? 'Judge note' : 'Why it failed', v: x.reason });
   if (x.checks?.length) kv.push({ k: 'Facts', v: x.checks.map((ch) => `${ch.ok ? '✓' : '✗'} ${ch.kind === 'excludes' ? 'not ' : ''}${ch.term}`).join('\n') });
@@ -255,7 +255,7 @@ export function runScreen(c: EvalCtx, runId: string, vsId?: string | null): Scre
       keepKv: true,
       acts: [
         ...(x.job_id ? [act('Open trace', () => c.go.trace(x.job_id!))] : []),
-        ...(c.canEdit && x.case_id && x.answer && x.status === 'scored' && !x.passed ? [act('Use this answer as reference', () => c.a.useAnswer(r, x))] : []),
+        ...(c.canEdit && x.case_id && x.answer && x.status === 'scored' && !x.passed ? [act('Use as expected answer', () => c.a.useAnswer(r, x))] : []),
       ],
     })),
   });

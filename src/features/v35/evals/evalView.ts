@@ -107,7 +107,21 @@ export function parseTerms(text: string | null | undefined): string[] {
     .filter(Boolean);
 }
 
-export const termsText = (terms: string[] | null | undefined) => (terms ?? []).join('\n');
+/** '' or why a question cannot be saved: no question, nothing to check, or a sentence where a short fact belongs. */
+export function caseProblem(x: EvalCaseIn): string {
+  if (!x.question.trim()) return 'Enter the question.';
+  if (!x.must_include?.length && !x.expected?.trim()) return 'Add the expected answer, or at least one fact the answer must include, so the answer can be checked.';
+  // a sentence: more than 5 words, or a number with 2+ other words ("2.62% in April 2026"); names like "Ministry of Public Health" are fine
+  const sentence = (alt: string) => {
+    const w = alt.trim().split(/\s+/);
+    return w.length > 5 || (w.length >= 3 && /\d/.test(alt));
+  };
+  const long = [...(x.must_include ?? []), ...(x.must_not_include ?? [])].find((t) => t.split('|').some(sentence));
+  if (long) return `"${long}" is a sentence. Facts are found word for word, so keep each one short (a number or a name, e.g. 2.62 and April 2026) and put the full answer in Expected answer.`;
+  return '';
+}
+
+export const termsText =(terms: string[] | null | undefined) => (terms ?? []).join('\n');
 
 // ------------------------------------------------------------------ CSV import
 export const CSV_COLUMNS = ['question', 'expected', 'must_include', 'must_not_include', 'tags'] as const;
@@ -130,7 +144,10 @@ export function parseCsv(text: string): string[][] {
         i++;
       } else if (ch === '"') quoted = false;
       else field += ch;
-    } else if (ch === '"' && field === '') quoted = true;
+    } else if (ch === '"' && field.trim() === '') {
+      field = ''; // spaces before an opening quote (indented copy) are not part of the field
+      quoted = true;
+    }
     else if (ch === sep) {
       row.push(field);
       field = '';

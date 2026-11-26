@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { EvalResult, EvalRun } from '@/api/platformEval';
 import { agentEvalSections, runScreen, setScreen, setsScreen, type EvalCtx } from './evalBuild';
 import type { EvalState } from './evalLive';
-import { agentChanges, compareHeadline, compareRuns, fmtMs, parseCasesCsv, parseCsv, parseTerms, previousRun, resultPill, runOutcome, runPill, summaryStats } from './evalView';
+import { agentChanges, caseProblem, compareHeadline, compareRuns, fmtMs, parseCasesCsv, parseCsv, parseTerms, previousRun, resultPill, runOutcome, runPill, summaryStats } from './evalView';
 
 const NOW = Date.parse('2026-11-26T12:00:00Z');
 const SUM = { total: 3, done: 3, passed: 2, failed: 1, errors: 0, pass_rate: 0.6667, checks_passed: 4, checks_total: 5, correctness: 4.33, grounding: 4, completeness: 5, judged: 3, latency_ms_avg: 4000, latency_ms_p95: 9000, tokens_total: 30000, tool_errors: 0 };
@@ -57,6 +57,17 @@ describe('CSV import', () => {
     expect(parseCasesCsv('expected\nx').errors[0]).toMatch(/"question" is required/);
     expect(parseCasesCsv('').errors).toEqual(['The file is empty.']);
     expect(parseTerms(' a \n\nb; c ')).toEqual(['a', 'b', 'c']);
+    // pasted with indentation
+    expect(parseCasesCsv('   question,expected,must_include\n   "Q1?","Qatar 4.17%, Kuwait 2.06%","4.17;2.06"').cases[0]).toMatchObject({ question: 'Q1?', expected: 'Qatar 4.17%, Kuwait 2.06%', must_include: ['4.17', '2.06'] });
+  });
+
+  it('refuses a sentence where a short fact belongs', () => {
+    expect(caseProblem({ question: 'Latest inflation?', must_include: ['2.62% in April 2026'] })).toMatch(/is a sentence/);
+    expect(caseProblem({ question: 'Latest inflation?', expected: '2.62% in April 2026', must_include: ['2.62', 'April 2026'] })).toBe('');
+    expect(caseProblem({ question: 'Latest inflation?', expected: '2.62% in April 2026' })).toBe('');
+    expect(caseProblem({ question: 'Who publishes it?', must_include: ['Ministry of Public Health', 'Q1 2026', 'Kuwait | الكويت'] })).toBe('');
+    expect(caseProblem({ question: 'Latest inflation?' })).toMatch(/expected answer/);
+    expect(caseProblem({ question: ' ', expected: 'x' })).toBe('Enter the question.');
   });
 });
 
@@ -124,7 +135,7 @@ describe('screens', () => {
     expect(m.head.acts!.map((x) => x.l)).toEqual(['Compare with…', 'Delete']);
     const q = m.sections.find((s) => s.title === 'Questions')!;
     expect(q.cols).toEqual(['#', 'Question', 'Result', 'Facts', 'Judge', 'Time']);
-    expect(q.rows![0].kv!.map((k) => k.k)).toEqual(['Question', 'Answer', 'Reference answer', 'Judge note', 'Facts', 'Judge', 'Time', 'Tools', 'Tokens', 'KAP job']);
+    expect(q.rows![0].kv!.map((k) => k.k)).toEqual(['Question', 'Answer', 'Expected answer', 'Judge note', 'Facts', 'Judge', 'Time', 'Tools', 'Tokens', 'KAP job']);
     q.rows![0].acts![0].f();
     expect(c.go.trace).toHaveBeenCalledWith('j0');
     const cmp = m.sections.find((s) => s.group?.startsWith('Compared with'))!;
@@ -132,7 +143,7 @@ describe('screens', () => {
     expect(cmp.title).toBe('1 fixed · 0 broken · 0 still failing · 1 still passing');
     // a failed question can become the reference
     const failed = runScreen(c, 'a').sections.find((s) => s.title === 'Questions')!.rows![1];
-    expect(failed.acts!.map((x) => x.l)).toEqual(['Open trace', 'Use this answer as reference']);
+    expect(failed.acts!.map((x) => x.l)).toEqual(['Open trace', 'Use as expected answer']);
     expect(runScreen(ctx({ st: { ...st, run: { b: { ...b0, status: 'running' } } } }), 'b').head.acts!.map((x) => x.l)).toEqual(['Cancel run']);
   });
 
